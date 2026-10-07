@@ -25,12 +25,34 @@ export USER="${USER:-$(id -un)}"
 home="$(getent passwd "$(id -u)" | cut -d: -f6)"
 test -n "$home"
 export HOME="$home"
-toolchain="$home/.local/opt/github-runner-toolchain/bin"
-lib="$home/.local/lib/slurm-actions-scaleset"
-run_dir="/tmp/github-scale-set-${SLURM_JOB_ID}-${runner_name}"
+runtime_config="${RUNNER_RUNTIME_CONFIG:-$home/.config/slurm-actions-scaleset/runtime.conf}"
+test -r "$runtime_config"
+. "$runtime_config"
+
+: "${RUNNER_WORK_ROOT:?RUNNER_WORK_ROOT is required}"
+: "${TOOLCHAIN_BIN:?TOOLCHAIN_BIN is required}"
+: "${SHARED_TOOL_CACHE:?SHARED_TOOL_CACHE is required}"
+: "${TOOLCHAIN_LOCK_FILE:?TOOLCHAIN_LOCK_FILE is required}"
+: "${GOST_BIN:?GOST_BIN is required}"
+: "${LOCAL_HTTP_PROXY_HOST:?LOCAL_HTTP_PROXY_HOST is required}"
+: "${LOCAL_HTTP_PROXY_PORT:?LOCAL_HTTP_PROXY_PORT is required}"
+: "${GIT_TARGET_URL_PREFIX:?GIT_TARGET_URL_PREFIX is required}"
+: "${GIT_EGRESS_SCHEME:?GIT_EGRESS_SCHEME is required}"
+: "${GIT_EGRESS_HOST:?GIT_EGRESS_HOST is required}"
+: "${GIT_EGRESS_USERNAME:?GIT_EGRESS_USERNAME is required}"
+: "${EGRESS_TOKEN_FILE:?EGRESS_TOKEN_FILE is required}"
+: "${EGRESS_ENV_FILE:?EGRESS_ENV_FILE is required}"
+
+test -x "$GOST_BIN"
+test -r "$EGRESS_TOKEN_FILE"
+test -r "$EGRESS_ENV_FILE"
+
+toolchain="$TOOLCHAIN_BIN"
+run_dir="${RUNNER_WORK_ROOT%/}/github-scale-set-${SLURM_JOB_ID}-${runner_name}"
 log_dir="$state_dir/runners/${runner_name}-${SLURM_JOB_ID}"
-toolchain_lock="$home/.local/state/slurm-actions-scaleset/toolchain.lock"
+toolchain_lock="$TOOLCHAIN_LOCK_FILE"
 job_git_config="$run_dir/gitconfig"
+gost_config="$run_dir/gost.json"
 bridge_pid=''
 
 cleanup() {
@@ -60,7 +82,7 @@ tar -xzf "$runner_archive" -C "$run_dir"
 # each ephemeral job with read-only links to centrally managed cached tools.
 # Versions not present here remain job-local and can still be downloaded.
 tool_cache="$run_dir/_work/_tool"
-shared_tool_cache="$home/.local/share/github-actions-toolcache"
+shared_tool_cache="$SHARED_TOOL_CACHE"
 mkdir -p "$tool_cache"
 if [[ -d "$shared_tool_cache" ]]; then
   for tool_dir in "$shared_tool_cache"/*; do
@@ -91,23 +113,105 @@ chmod 600 "$job_git_config"
 export GIT_CONFIG_GLOBAL="$job_git_config"
 export MAMBA_ROOT_PREFIX="$run_dir/mamba-root"
 export CONDA_PKGS_DIRS="$run_dir/conda-pkgs"
+
+# Build the dedicated GitHub Git proxy entry from the protected egress token
+# without placing credentials in argv or exported environment variables.
+JOB_GIT_CONFIG="$job_git_config" \
+GIT_TARGET_URL_PREFIX="$GIT_TARGET_URL_PREFIX" \
+GIT_EGRESS_SCHEME="$GIT_EGRESS_SCHEME" \
+GIT_EGRESS_HOST="$GIT_EGRESS_HOST" \
+GIT_EGRESS_USERNAME="$GIT_EGRESS_USERNAME" \
+EGRESS_TOKEN_FILE="$EGRESS_TOKEN_FILE" \
+"$toolchain/python" <<'PY'
+import os
+from pathlib import Path
+from urllib.parse import quote
+
+path = Path(os.environ["JOB_GIT_CONFIG"])
+token = Path(os.environ["EGRESS_TOKEN_FILE"]).read_text().strip()
+if not token:
+    raise SystemExit("egress token is empty")
+
+scheme = os.environ["GIT_EGRESS_SCHEME"]
+host = os.environ["GIT_EGRESS_HOST"]
+username = quote(os.environ["GIT_EGRESS_USERNAME"], safe="")
+password = quote(token, safe="")
+target = os.environ["GIT_TARGET_URL_PREFIX"]
+proxy = f"{scheme}://{username}:{password}@{host}"
+path.write_text(f'[http "{target}"]\n\tproxy = {proxy}\n')
+PY
+chmod 600 "$job_git_config"
+
 if command -v git-lfs >/dev/null 2>&1; then
   git lfs install --skip-repo >/dev/null
 fi
 
 . "$home/.bash_proxy"
 proxy set >/dev/null
-git_proxy="$https_proxy"
 
-local_proxy_host='127.0.0.1'
-local_proxy_port='18425'
-gost_upstream="${git_proxy/socks5h:/socks5:}"
-"$home/.local/bin/gost" \
-  -L "http://${local_proxy_host}:${local_proxy_port}" \
-  -F "$gost_upstream" >"$log_dir/gost.log" 2>&1 &
+# Convert the authenticated SOCKS endpoint produced by `proxy set` into a
+# loopback HTTP CONNECT proxy for Node-based Actions. The upstream credential
+# is written only to an owner-readable per-job config, never to process argv.
+UPSTREAM_PROXY_URL="$https_proxy" \
+GOST_CONFIG="$gost_config" \
+LOCAL_HTTP_PROXY_HOST="$LOCAL_HTTP_PROXY_HOST" \
+LOCAL_HTTP_PROXY_PORT="$LOCAL_HTTP_PROXY_PORT" \
+GOST_LOG_LEVEL="${GOST_LOG_LEVEL:-warn}" \
+"$toolchain/python" <<'PY'
+import json
+import os
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+url = urlsplit(os.environ["UPSTREAM_PROXY_URL"])
+if url.scheme not in {"socks5", "socks5h"} or not url.hostname or not url.port:
+    raise SystemExit("proxy set did not produce a usable SOCKS5 endpoint")
+
+connector = {"type": "socks5"}
+if url.username is not None or url.password is not None:
+    connector["auth"] = {
+        "username": unquote(url.username or ""),
+        "password": unquote(url.password or ""),
+    }
+
+config = {
+    "services": [{
+        "name": "runner-http-proxy",
+        "addr": f'{os.environ["LOCAL_HTTP_PROXY_HOST"]}:{os.environ["LOCAL_HTTP_PROXY_PORT"]}',
+        "handler": {"type": "http", "chain": "runner-chain"},
+        "listener": {"type": "tcp"},
+    }],
+    "chains": [{
+        "name": "runner-chain",
+        "hops": [{
+            "name": "runner-hop",
+            "nodes": [{
+                "name": "runner-upstream",
+                "addr": f"{url.hostname}:{url.port}",
+                "connector": connector,
+                "dialer": {"type": "tcp"},
+            }],
+        }],
+    }],
+    "log": {
+        "output": "stderr",
+        "level": os.environ["GOST_LOG_LEVEL"],
+        "format": "json",
+    },
+}
+
+path = Path(os.environ["GOST_CONFIG"])
+path.write_text(json.dumps(config))
+path.chmod(0o600)
+PY
+
+# Do not leak the authenticated upstream proxy into the GOST environment.
+unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY ftp_proxy FTP_PROXY
+
+"$GOST_BIN" -C "$gost_config" >"$log_dir/gost.log" 2>&1 &
 bridge_pid=$!
 
-"$toolchain/python" - "$local_proxy_host" "$local_proxy_port" <<'PY'
+"$toolchain/python" - "$LOCAL_HTTP_PROXY_HOST" "$LOCAL_HTTP_PROXY_PORT" <<'PY'
 import socket, sys, time
 host, port = sys.argv[1], int(sys.argv[2])
 for _ in range(100):
@@ -118,17 +222,13 @@ for _ in range(100):
         time.sleep(.05)
 raise SystemExit("local HTTP proxy did not become ready")
 PY
+rm -f "$gost_config"
 
-runner_proxy="http://${local_proxy_host}:${local_proxy_port}"
+runner_proxy="http://${LOCAL_HTTP_PROXY_HOST}:${LOCAL_HTTP_PROXY_PORT}"
 export HTTP_PROXY="$runner_proxy" HTTPS_PROXY="$runner_proxy"
 export http_proxy="$runner_proxy" https_proxy="$runner_proxy"
 unset ALL_PROXY all_proxy FTP_PROXY ftp_proxy
-export NO_PROXY='localhost,127.0.0.1,::1'
-export no_proxy="$NO_PROXY"
-
-export GIT_CONFIG_COUNT=1
-export GIT_CONFIG_KEY_0='http.https://github.com.proxy'
-export GIT_CONFIG_VALUE_0="$git_proxy"
+. "$EGRESS_ENV_FILE"
 
 export ACTIONS_RUNNER_INPUT_JITCONFIG="$(cat "$jit_file")"
 rm -f "$jit_file"

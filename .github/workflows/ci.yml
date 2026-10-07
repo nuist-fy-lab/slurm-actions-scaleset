@@ -24,11 +24,14 @@ jobs:
       - name: Check scripts
         run: |
           bash -n scripts/*.sh
-          mkdir -p "$HOME/.local/bin" "$HOME/.local/lib/slurm-actions-scaleset"
+          mkdir -p "$HOME/.local/bin" "$HOME/.local/lib/slurm-actions-scaleset" "$HOME/.config/slurm-actions-scaleset"
           printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/slurm-actions-scaleset"
           chmod +x "$HOME/.local/bin/slurm-actions-scaleset"
           cp scripts/watchdog.sh "$HOME/.local/lib/slurm-actions-scaleset/watchdog.sh"
-          chmod +x "$HOME/.local/lib/slurm-actions-scaleset/watchdog.sh"
+          cp scripts/compute-runner.sh scripts/start-controller.sh "$HOME/.local/lib/slurm-actions-scaleset/"
+          cp config/controller.conf.example "$HOME/.config/slurm-actions-scaleset/controller.conf"
+          cp config/runtime.conf.example "$HOME/.config/slurm-actions-scaleset/runtime.conf"
+          chmod +x "$HOME/.local/lib/slurm-actions-scaleset/"*.sh
           systemd-analyze verify systemd/*.service systemd/*.timer
       - name: Test
         run: go test ./...

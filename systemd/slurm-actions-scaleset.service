@@ -10,20 +10,10 @@ Type=simple
 ExecStartPre=/usr/bin/mkdir -p %h/.local/state/slurm-actions-scaleset
 ExecStartPre=/usr/bin/test -x %h/.local/bin/slurm-actions-scaleset
 ExecStartPre=/usr/bin/test -x %h/.local/bin/gost
-ExecStartPre=/usr/bin/test -r %h/.cache/github-actions-runner/actions-runner-linux-x64-2.338.0.tar.gz
+ExecStartPre=/usr/bin/test -r %h/.config/slurm-actions-scaleset/controller.conf
+ExecStartPre=/usr/bin/test -r %h/.config/slurm-actions-scaleset/runtime.conf
 ExecStartPre=/usr/bin/test -x %h/.local/lib/slurm-actions-scaleset/compute-runner.sh
-ExecStart=%h/.local/bin/slurm-actions-scaleset \
-  --url https://github.com/nuist-fy-lab/satellite-data \
-  --name c2ln1-p1shr \
-  --max-runners 4 \
-  --partition p1shr \
-  --cpus 40 \
-  --memory 16G \
-  --state-dir %h/.local/state/slurm-actions-scaleset \
-  --heartbeat-file %h/.local/state/slurm-actions-scaleset/heartbeat \
-  --runner-archive %h/.cache/github-actions-runner/actions-runner-linux-x64-2.338.0.tar.gz \
-  --runner-script %h/.local/lib/slurm-actions-scaleset/compute-runner.sh \
-  --log-format json
+ExecStart=%h/.local/lib/slurm-actions-scaleset/start-controller.sh
 Restart=always
 RestartSec=5
 KillMode=process

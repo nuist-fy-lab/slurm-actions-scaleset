@@ -1,0 +1,16 @@
+RUNNER_WORK_ROOT='/tmp'
+TOOLCHAIN_BIN="$HOME/.local/opt/github-runner-toolchain/bin"
+SHARED_TOOL_CACHE="$HOME/.local/share/github-actions-toolcache"
+TOOLCHAIN_LOCK_FILE="$HOME/.local/state/slurm-actions-scaleset/toolchain.lock"
+
+GOST_BIN="$HOME/.local/bin/gost"
+LOCAL_HTTP_PROXY_HOST='127.0.0.1'
+LOCAL_HTTP_PROXY_PORT='18425'
+GOST_LOG_LEVEL='warn'
+
+GIT_TARGET_URL_PREFIX='https://github.com'
+GIT_EGRESS_SCHEME='https'
+GIT_EGRESS_HOST='git.rs.fyzure.fyi'
+GIT_EGRESS_USERNAME='token'
+EGRESS_TOKEN_FILE="$HOME/.config/fyzure-egress/token"
+EGRESS_ENV_FILE="$HOME/.config/fyzure-egress/env.sh"

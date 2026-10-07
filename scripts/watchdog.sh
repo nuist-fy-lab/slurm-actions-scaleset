@@ -5,13 +5,27 @@ uid_num="$(id -u)"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid_num}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
 
-service="${SLURM_ACTIONS_SCALESET_SERVICE:-slurm-actions-scaleset.service}"
-state="${SLURM_ACTIONS_SCALESET_STATE_DIR:-$HOME/.local/state/slurm-actions-scaleset}"
-heartbeat="$state/heartbeat"
+config="${SLURM_ACTIONS_SCALESET_CONFIG:-$HOME/.config/slurm-actions-scaleset/controller.conf}"
+if [[ ! -r "$config" ]]; then
+  echo "watchdog config not readable: $config" >&2
+  exit 1
+fi
+. "$config"
+
+: "${MAX_RUNNERS:?MAX_RUNNERS is required}"
+: "${STATE_DIR:?STATE_DIR is required}"
+: "${HEARTBEAT_FILE:?HEARTBEAT_FILE is required}"
+: "${WATCHDOG_SERVICE:?WATCHDOG_SERVICE is required}"
+: "${WATCHDOG_HEARTBEAT_MAX_AGE:?WATCHDOG_HEARTBEAT_MAX_AGE is required}"
+: "${SLURM_JOB_PREFIX:?SLURM_JOB_PREFIX is required}"
+
+service="$WATCHDOG_SERVICE"
+state="$STATE_DIR"
+heartbeat="$HEARTBEAT_FILE"
 log="$state/watchdog.log"
-max_runners="${SLURM_ACTIONS_SCALESET_MAX_RUNNERS:-4}"
-heartbeat_max_age="${SLURM_ACTIONS_SCALESET_HEARTBEAT_MAX_AGE:-120}"
-job_prefix="${SLURM_ACTIONS_SCALESET_JOB_PREFIX:-ghss-c2ln1-}"
+max_runners="$MAX_RUNNERS"
+heartbeat_max_age="$WATCHDOG_HEARTBEAT_MAX_AGE"
+job_prefix="$SLURM_JOB_PREFIX"
 mkdir -p "$state"
 exec >>"$log" 2>&1
 

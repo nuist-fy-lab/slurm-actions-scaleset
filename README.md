@@ -17,6 +17,15 @@ Default c2ln1 policy:
 The controller is intended to run on the c2ln1 login node. Each runner executes
 on a Slurm compute node and consumes one job only.
 
+Runtime values are separated from scripts:
+
+- `controller.conf` owns repository/scale-set/Slurm capacity settings.
+- `runtime.conf` owns local proxy, Git egress, toolchain, and cache paths.
+
+The compute runner writes Git and GOST credentials only to owner-readable,
+per-job temporary configuration files. Credentials are not passed in process
+arguments.
+
 JavaScript actions receive a local HTTP CONNECT proxy provided by GOST, which
 forwards through the existing `proxy set direct` SOCKS5 tunnel on each compute
 node. Production currently pins GOST v3.3.0 (linux/amd64).

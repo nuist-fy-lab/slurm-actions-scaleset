@@ -25,8 +25,8 @@ jobs:
         run: |
           bash -n scripts/*.sh
           mkdir -p "$HOME/.local/bin" "$HOME/.local/lib/slurm-actions-scaleset"
-          printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/github-egress-run"
-          chmod +x "$HOME/.local/bin/github-egress-run"
+          printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/slurm-actions-scaleset"
+          chmod +x "$HOME/.local/bin/slurm-actions-scaleset"
           cp scripts/watchdog.sh "$HOME/.local/lib/slurm-actions-scaleset/watchdog.sh"
           chmod +x "$HOME/.local/lib/slurm-actions-scaleset/watchdog.sh"
           systemd-analyze verify systemd/*.service systemd/*.timer

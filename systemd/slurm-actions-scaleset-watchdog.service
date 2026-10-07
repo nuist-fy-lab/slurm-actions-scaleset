@@ -1,0 +1,8 @@
+[Unit]
+Description=Watchdog for GitHub Actions Runner Scale Set Slurm adapter
+After=slurm-actions-scaleset.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/lib/slurm-actions-scaleset/watchdog.sh
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin

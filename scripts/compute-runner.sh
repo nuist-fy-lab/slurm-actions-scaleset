@@ -23,7 +23,7 @@ home="$(getent passwd "$(id -u)" | cut -d: -f6)"
 test -n "$home"
 export HOME="$home"
 toolchain="$home/.local/opt/github-runner-toolchain/bin"
-lib="$home/.local/lib/github-slurm-runner"
+lib="$home/.local/lib/slurm-actions-scaleset"
 run_dir="/tmp/github-scale-set-${SLURM_JOB_ID}-${runner_name}"
 log_dir="$home/.local/state/slurm-actions-scaleset/runners/${runner_name}-${SLURM_JOB_ID}"
 bridge_pid=''

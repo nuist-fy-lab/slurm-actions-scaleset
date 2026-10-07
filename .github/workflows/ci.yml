@@ -21,6 +21,11 @@ jobs:
         run: go mod tidy
       - name: Verify tidy tree
         run: git diff --exit-code -- go.mod go.sum
+      - name: Check scripts
+        run: |
+          bash -n scripts/*.sh
+          python3 -m py_compile scripts/http-connect-via-socks.py
+          systemd-analyze verify systemd/*.service systemd/*.timer
       - name: Test
         run: go test ./...
       - name: Vet

@@ -136,7 +136,7 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		return fmt.Errorf("create listener: %w", err)
 	}
 
-	scaler, err := newScaler(ctx, cfg, logger.WithGroup("scaler"), set.ID, client, session, &commandSlurm{cfg: cfg}, func() error {
+	scaler, err := newScaler(ctx, cfg, logger.WithGroup("scaler"), set.ID, client, &commandSlurm{cfg: cfg}, func() error {
 		return writeHeartbeat(cfg.HeartbeatFile)
 	})
 	if err != nil {
@@ -144,5 +144,5 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	}
 
 	logger.Info("starting scale set listener", "scaleSetID", set.ID, "maxRunners", cfg.MaxRunners)
-	return listener.Run(ctx, scaler)
+	return listen.Run(ctx, scaler)
 }

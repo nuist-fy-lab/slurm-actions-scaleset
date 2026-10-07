@@ -19,19 +19,17 @@ type runnerState struct {
 }
 
 type scaler struct {
-	mu          sync.Mutex
-	cfg         config
-	logger      *slog.Logger
-	scaleSetID  int
-	client      *scaleset.Client
-	session     listener.Client
-	slurm       slurmClient
-	runners     map[string]runnerState
-	lastDesired int
-	heartbeat   func() error
+	mu         sync.Mutex
+	cfg        config
+	logger     *slog.Logger
+	scaleSetID int
+	client     *scaleset.Client
+	slurm      slurmClient
+	runners    map[string]runnerState
+	heartbeat  func() error
 }
 
-func newScaler(ctx context.Context, cfg config, logger *slog.Logger, scaleSetID int, client *scaleset.Client, session listener.Client, slurm slurmClient, heartbeat func() error) (*scaler, error) {
+func newScaler(ctx context.Context, cfg config, logger *slog.Logger, scaleSetID int, client *scaleset.Client, slurm slurmClient, heartbeat func() error) (*scaler, error) {
 	active, err := slurm.Active(ctx)
 	if err != nil {
 		return nil, err
@@ -45,64 +43,50 @@ func newScaler(ctx context.Context, cfg config, logger *slog.Logger, scaleSetID 
 		logger:     logger,
 		scaleSetID: scaleSetID,
 		client:     client,
-		session:    session,
 		slurm:      slurm,
 		runners:    runners,
 		heartbeat:  heartbeat,
 	}, nil
 }
 
-func (s *scaler) Scale(ctx context.Context, msg *scaleset.RunnerScaleSetMessage) error {
+func (s *scaler) HandleJobStarted(ctx context.Context, started *scaleset.JobStarted) error {
 	if err := s.heartbeat(); err != nil {
 		s.logger.Warn("heartbeat update failed", "error", err)
 	}
-	if msg == nil {
-		return s.reconcile(ctx, s.lastDesired)
-	}
-
-	if len(msg.JobAvailableMessages) > 0 {
-		ids := make([]int64, 0, len(msg.JobAvailableMessages))
-		for _, job := range msg.JobAvailableMessages {
-			ids = append(ids, job.RunnerRequestID)
-		}
-		if _, err := s.session.AcquireJobs(ctx, ids); err != nil {
-			return fmt.Errorf("acquire jobs: %w", err)
-		}
-	}
-
-	var completedJobs []runnerState
 	s.mu.Lock()
-	for _, started := range msg.JobStartedMessages {
-		state := s.runners[started.RunnerName]
-		state.Busy = true
-		s.runners[started.RunnerName] = state
-		s.logger.Info("job started", "runner", started.RunnerName, "jobID", started.JobID)
-	}
-	for _, completed := range msg.JobCompletedMessages {
-		if state, ok := s.runners[completed.RunnerName]; ok {
-			completedJobs = append(completedJobs, state)
-		}
-		delete(s.runners, completed.RunnerName)
-		s.logger.Info("job completed", "runner", completed.RunnerName, "jobID", completed.JobID)
-	}
-	if msg.Statistics != nil {
-		s.lastDesired = msg.Statistics.TotalAssignedJobs
-	}
-	desired := s.lastDesired
+	state := s.runners[started.RunnerName]
+	state.Busy = true
+	s.runners[started.RunnerName] = state
 	s.mu.Unlock()
-	for _, state := range completedJobs {
+	s.logger.Info("job started", "runner", started.RunnerName, "jobID", started.JobID)
+	return nil
+}
+
+func (s *scaler) HandleJobCompleted(ctx context.Context, completed *scaleset.JobCompleted) error {
+	if err := s.heartbeat(); err != nil {
+		s.logger.Warn("heartbeat update failed", "error", err)
+	}
+	s.mu.Lock()
+	state, ok := s.runners[completed.RunnerName]
+	delete(s.runners, completed.RunnerName)
+	s.mu.Unlock()
+	s.logger.Info("job completed", "runner", completed.RunnerName, "jobID", completed.JobID)
+	if ok && state.JobID > 0 {
 		if err := s.slurm.Cancel(context.WithoutCancel(ctx), state.JobID); err != nil {
 			s.logger.Warn("failed to cancel completed Slurm runner", "slurmJobID", state.JobID, "error", err)
 		}
 	}
-
-	return s.reconcile(ctx, desired)
+	_ = os.Remove(filepath.Join(s.cfg.StateDir, "jit", completed.RunnerName+".jit"))
+	return nil
 }
 
-func (s *scaler) reconcile(ctx context.Context, desired int) error {
+func (s *scaler) HandleDesiredRunnerCount(ctx context.Context, desired int) (int, error) {
+	if err := s.heartbeat(); err != nil {
+		s.logger.Warn("heartbeat update failed", "error", err)
+	}
 	active, err := s.slurm.Active(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	s.mu.Lock()
@@ -147,15 +131,15 @@ func (s *scaler) reconcile(ctx context.Context, desired int) error {
 		}
 	}
 	if current >= desired {
-		return nil
+		return current, nil
 	}
 
 	for i := current; i < desired; i++ {
 		if err := s.startRunnerLocked(ctx); err != nil {
-			return err
+			return len(s.runners), err
 		}
 	}
-	return nil
+	return len(s.runners), nil
 }
 
 func (s *scaler) startRunnerLocked(ctx context.Context) error {

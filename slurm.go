@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -26,6 +28,10 @@ type commandSlurm struct {
 
 func (s *commandSlurm) Submit(ctx context.Context, runnerName, jitFile string) (int, error) {
 	jobName := "ghss-" + runnerName
+	logDir := filepath.Join(s.cfg.StateDir, "slurm")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return 0, fmt.Errorf("create Slurm log directory: %w", err)
+	}
 	args := []string{
 		"--parsable",
 		"--job-name=" + jobName,
@@ -34,6 +40,8 @@ func (s *commandSlurm) Submit(ctx context.Context, runnerName, jitFile string) (
 		"--ntasks=1",
 		fmt.Sprintf("--cpus-per-task=%d", s.cfg.CPUs),
 		"--mem=" + s.cfg.Memory,
+		"--output=" + filepath.Join(logDir, "%j.out"),
+		"--error=" + filepath.Join(logDir, "%j.err"),
 		"--export=NONE",
 		s.cfg.RunnerScript,
 		"--runner-name", runnerName,

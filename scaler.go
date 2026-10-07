@@ -95,9 +95,9 @@ func (s *scaler) HandleDesiredRunnerCount(ctx context.Context, desired int) (int
 	defer s.mu.Unlock()
 
 	for name, state := range s.runners {
-		if _, ok := active[name]; !ok && !state.Busy {
+		if _, ok := active[name]; !ok {
 			delete(s.runners, name)
-			s.logger.Warn("pruned missing idle runner", "runner", name, "slurmJobID", state.JobID)
+			s.logger.Info("pruned completed/missing Slurm runner", "runner", name, "slurmJobID", state.JobID, "wasBusy", state.Busy)
 		}
 	}
 	for name, job := range active {

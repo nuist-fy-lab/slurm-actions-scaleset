@@ -2,6 +2,7 @@ RUNNER_WORK_ROOT='/tmp'
 TOOLCHAIN_BIN="$HOME/.local/opt/github-runner-toolchain/bin"
 SHARED_TOOL_CACHE="$HOME/.local/share/github-actions-toolcache"
 TOOLCHAIN_LOCK_FILE="$HOME/.local/state/slurm-actions-scaleset/toolchain.lock"
+SHARED_GO_MODULE_CACHE="$HOME/.cache/slurm-actions-scaleset/go-mod"
 
 GOST_BIN="$HOME/.local/bin/gost"
 LOCAL_HTTP_PROXY_HOST='127.0.0.1'

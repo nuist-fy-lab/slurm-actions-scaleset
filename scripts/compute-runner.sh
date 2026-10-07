@@ -33,6 +33,7 @@ test -r "$runtime_config"
 : "${TOOLCHAIN_BIN:?TOOLCHAIN_BIN is required}"
 : "${SHARED_TOOL_CACHE:?SHARED_TOOL_CACHE is required}"
 : "${TOOLCHAIN_LOCK_FILE:?TOOLCHAIN_LOCK_FILE is required}"
+: "${SHARED_GO_MODULE_CACHE:?SHARED_GO_MODULE_CACHE is required}"
 : "${GOST_BIN:?GOST_BIN is required}"
 : "${LOCAL_HTTP_PROXY_HOST:?LOCAL_HTTP_PROXY_HOST is required}"
 : "${LOCAL_HTTP_PROXY_PORT:?LOCAL_HTTP_PROXY_PORT is required}"
@@ -70,7 +71,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$run_dir" "$log_dir" "$(dirname "$toolchain_lock")"
+mkdir -p "$run_dir" "$log_dir" "$(dirname "$toolchain_lock")" "$SHARED_GO_MODULE_CACHE"
 
 # Runner jobs may share one read-only toolchain, while maintenance takes an
 # exclusive lock before mutating it.
@@ -104,6 +105,7 @@ if [[ -d "$shared_tool_cache" ]]; then
 fi
 export RUNNER_TOOL_CACHE="$tool_cache"
 export AGENT_TOOLSDIRECTORY="$tool_cache"
+export GOMODCACHE="$SHARED_GO_MODULE_CACHE"
 
 export PATH="$toolchain:$home/.local/bin:$PATH"
 

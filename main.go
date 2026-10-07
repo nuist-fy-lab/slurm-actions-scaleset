@@ -23,12 +23,30 @@ func main() {
 		os.Exit(2)
 	}
 	logger := newLogger(cfg)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := run(ctx, cfg, logger); err != nil && !errors.Is(err, context.Canceled) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	go func() {
+		select {
+		case sig := <-signals:
+			logger.Warn("received shutdown signal", "signal", sig.String())
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	err = run(ctx, cfg, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("controller stopped after context cancellation")
+		return
+	}
+	if err != nil {
 		logger.Error("controller exited", "error", err)
 		os.Exit(1)
 	}
+	logger.Warn("controller run loop returned without cancellation")
 }
 
 func newLogger(cfg config) *slog.Logger {

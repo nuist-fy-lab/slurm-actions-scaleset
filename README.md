@@ -9,7 +9,7 @@ into ephemeral Slurm jobs.
 Default c2ln1 policy:
 
 - partition: `p1shr`
-- CPU per runner: `40`
+- CPU per runner: `8`
 - memory per runner: `16G`
 - maximum concurrent runners: `4`
 - runner mode: ephemeral JIT

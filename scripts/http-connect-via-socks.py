@@ -5,6 +5,7 @@ import selectors
 import socket
 import socketserver
 import struct
+import time
 from urllib.parse import urlsplit
 
 
@@ -18,7 +19,7 @@ def recv_exact(sock, size):
     return bytes(data)
 
 
-def connect_socks5(upstream_host, upstream_port, target_host, target_port):
+def connect_socks5_once(upstream_host, upstream_port, target_host, target_port):
     sock = socket.create_connection((upstream_host, upstream_port), timeout=15)
     sock.sendall(b"\x05\x01\x00")
     if recv_exact(sock, 2) != b"\x05\x00":
@@ -51,6 +52,23 @@ def connect_socks5(upstream_host, upstream_port, target_host, target_port):
     recv_exact(sock, 2)
     sock.settimeout(None)
     return sock
+
+
+def connect_socks5(upstream_host, upstream_port, target_host, target_port):
+    last_error = None
+    for attempt in range(3):
+        try:
+            return connect_socks5_once(
+                upstream_host,
+                upstream_port,
+                target_host,
+                target_port,
+            )
+        except OSError as error:
+            last_error = error
+            if attempt < 2:
+                time.sleep(0.25 * (attempt + 1))
+    raise last_error
 
 
 def relay(left, right):

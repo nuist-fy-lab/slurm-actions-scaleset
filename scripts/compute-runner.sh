@@ -81,7 +81,7 @@ if command -v git-lfs >/dev/null 2>&1; then
 fi
 
 . "$home/.bash_proxy"
-proxy set direct >/dev/null
+proxy set >/dev/null
 git_proxy="$https_proxy"
 
 local_proxy_host='127.0.0.1'

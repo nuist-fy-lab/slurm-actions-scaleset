@@ -37,8 +37,7 @@ jobs:
         run: go vet ./...
       - name: Validate runtime scripts
         run: |
-          bash -n scripts/compute-runner.sh scripts/watchdog.sh
-          python3 -m py_compile scripts/http-connect-via-socks.py
+          bash -n scripts/compute-runner.sh scripts/watchdog.sh scripts/install-gost.sh
       - name: Build Linux amd64
         run: |
           mkdir -p dist

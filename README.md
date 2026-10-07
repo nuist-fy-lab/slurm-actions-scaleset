@@ -17,6 +17,10 @@ Default c2ln1 policy:
 The controller is intended to run on the c2ln1 login node. Each runner executes
 on a Slurm compute node and consumes one job only.
 
+JavaScript actions receive a local HTTP CONNECT proxy provided by GOST, which
+forwards through the existing `proxy set direct` SOCKS5 tunnel on each compute
+node. Production currently pins GOST v3.3.0 (linux/amd64).
+
 Runtime hardening:
 
 - the controller runs as a user systemd service with `KillMode=process`, so a

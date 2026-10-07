@@ -85,26 +85,17 @@ proxy set >/dev/null
 git_proxy="$https_proxy"
 
 local_proxy_host='127.0.0.1'
-port_file="$run_dir/http-proxy.port"
-"$toolchain/python" "$lib/http-connect-via-socks.py" \
-  --listen-host "$local_proxy_host" \
-  --listen-port 0 \
-  --port-file "$port_file" \
-  --upstream "$git_proxy" >"$log_dir/http-connect-via-socks.log" 2>&1 &
+local_proxy_port='18425'
+gost_upstream="${git_proxy/socks5h:/socks5:}"
+"$home/.local/bin/gost" \
+  -L "http://${local_proxy_host}:${local_proxy_port}" \
+  -F "$gost_upstream" >"$log_dir/gost.log" 2>&1 &
 bridge_pid=$!
 
-"$toolchain/python" - "$local_proxy_host" "$port_file" <<'PY'
-import pathlib, socket, sys, time
-host, port_file = sys.argv[1], pathlib.Path(sys.argv[2])
+"$toolchain/python" - "$local_proxy_host" "$local_proxy_port" <<'PY'
+import socket, sys, time
+host, port = sys.argv[1], int(sys.argv[2])
 for _ in range(100):
-    if not port_file.exists():
-        time.sleep(.05)
-        continue
-    try:
-        port = int(port_file.read_text().strip())
-    except (OSError, ValueError):
-        time.sleep(.05)
-        continue
     try:
         with socket.create_connection((host, port), timeout=.2):
             raise SystemExit(0)
@@ -112,8 +103,6 @@ for _ in range(100):
         time.sleep(.05)
 raise SystemExit("local HTTP proxy did not become ready")
 PY
-
-local_proxy_port="$(cat "$port_file")"
 
 runner_proxy="http://${local_proxy_host}:${local_proxy_port}"
 export HTTP_PROXY="$runner_proxy" HTTPS_PROXY="$runner_proxy"

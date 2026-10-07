@@ -9,6 +9,7 @@ StartLimitBurst=10
 Type=simple
 ExecStartPre=/usr/bin/mkdir -p %h/.local/state/slurm-actions-scaleset
 ExecStartPre=/usr/bin/test -x %h/.local/bin/slurm-actions-scaleset
+ExecStartPre=/usr/bin/test -x %h/.local/bin/gost
 ExecStartPre=/usr/bin/test -r %h/.cache/github-actions-runner/actions-runner-linux-x64-2.338.0.tar.gz
 ExecStartPre=/usr/bin/test -x %h/.local/lib/slurm-actions-scaleset/compute-runner.sh
 ExecStart=%h/.local/bin/github-egress-run %h/.local/bin/slurm-actions-scaleset \

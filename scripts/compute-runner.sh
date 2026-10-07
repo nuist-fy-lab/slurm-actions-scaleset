@@ -36,9 +36,10 @@ test -r "$runtime_config"
 : "${GOST_BIN:?GOST_BIN is required}"
 : "${LOCAL_HTTP_PROXY_HOST:?LOCAL_HTTP_PROXY_HOST is required}"
 : "${LOCAL_HTTP_PROXY_PORT:?LOCAL_HTTP_PROXY_PORT is required}"
+: "${LOCAL_GIT_PROXY_PORT:?LOCAL_GIT_PROXY_PORT is required}"
 : "${GIT_TARGET_URL_PREFIX:?GIT_TARGET_URL_PREFIX is required}"
-: "${GIT_EGRESS_SCHEME:?GIT_EGRESS_SCHEME is required}"
 : "${GIT_EGRESS_HOST:?GIT_EGRESS_HOST is required}"
+: "${GIT_EGRESS_PORT:?GIT_EGRESS_PORT is required}"
 : "${GIT_EGRESS_USERNAME:?GIT_EGRESS_USERNAME is required}"
 : "${EGRESS_TOKEN_FILE:?EGRESS_TOKEN_FILE is required}"
 : "${EGRESS_ENV_FILE:?EGRESS_ENV_FILE is required}"
@@ -114,32 +115,11 @@ export GIT_CONFIG_GLOBAL="$job_git_config"
 export MAMBA_ROOT_PREFIX="$run_dir/mamba-root"
 export CONDA_PKGS_DIRS="$run_dir/conda-pkgs"
 
-# Build the dedicated GitHub Git proxy entry from the protected egress token
-# without placing credentials in argv or exported environment variables.
-JOB_GIT_CONFIG="$job_git_config" \
-GIT_TARGET_URL_PREFIX="$GIT_TARGET_URL_PREFIX" \
-GIT_EGRESS_SCHEME="$GIT_EGRESS_SCHEME" \
-GIT_EGRESS_HOST="$GIT_EGRESS_HOST" \
-GIT_EGRESS_USERNAME="$GIT_EGRESS_USERNAME" \
-EGRESS_TOKEN_FILE="$EGRESS_TOKEN_FILE" \
-"$toolchain/python" <<'PY'
-import os
-from pathlib import Path
-from urllib.parse import quote
-
-path = Path(os.environ["JOB_GIT_CONFIG"])
-token = Path(os.environ["EGRESS_TOKEN_FILE"]).read_text().strip()
-if not token:
-    raise SystemExit("egress token is empty")
-
-scheme = os.environ["GIT_EGRESS_SCHEME"]
-host = os.environ["GIT_EGRESS_HOST"]
-username = quote(os.environ["GIT_EGRESS_USERNAME"], safe="")
-password = quote(token, safe="")
-target = os.environ["GIT_TARGET_URL_PREFIX"]
-proxy = f"{scheme}://{username}:{password}@{host}"
-path.write_text(f'[http "{target}"]\n\tproxy = {proxy}\n')
-PY
+# Git talks only to a loopback proxy. The protected git.rs credential lives in
+# GOST's temporary per-job config and never enters Git argv/env/config.
+printf '[http "%s"]\n\tproxy = http://%s:%s\n' \
+  "$GIT_TARGET_URL_PREFIX" "$LOCAL_HTTP_PROXY_HOST" "$LOCAL_GIT_PROXY_PORT" \
+  >"$job_git_config"
 chmod 600 "$job_git_config"
 
 if command -v git-lfs >/dev/null 2>&1; then
@@ -156,6 +136,11 @@ UPSTREAM_PROXY_URL="$https_proxy" \
 GOST_CONFIG="$gost_config" \
 LOCAL_HTTP_PROXY_HOST="$LOCAL_HTTP_PROXY_HOST" \
 LOCAL_HTTP_PROXY_PORT="$LOCAL_HTTP_PROXY_PORT" \
+LOCAL_GIT_PROXY_PORT="$LOCAL_GIT_PROXY_PORT" \
+GIT_EGRESS_HOST="$GIT_EGRESS_HOST" \
+GIT_EGRESS_PORT="$GIT_EGRESS_PORT" \
+GIT_EGRESS_USERNAME="$GIT_EGRESS_USERNAME" \
+EGRESS_TOKEN_FILE="$EGRESS_TOKEN_FILE" \
 GOST_LOG_LEVEL="${GOST_LOG_LEVEL:-warn}" \
 "$toolchain/python" <<'PY'
 import json
@@ -174,25 +159,60 @@ if url.username is not None or url.password is not None:
         "password": unquote(url.password or ""),
     }
 
+token = Path(os.environ["EGRESS_TOKEN_FILE"]).read_text().strip()
+if not token:
+    raise SystemExit("egress token is empty")
+
+def socks_node(name):
+    return {
+        "name": name,
+        "addr": f"{url.hostname}:{url.port}",
+        "connector": connector,
+        "dialer": {"type": "tcp"},
+    }
+
 config = {
-    "services": [{
-        "name": "runner-http-proxy",
-        "addr": f'{os.environ["LOCAL_HTTP_PROXY_HOST"]}:{os.environ["LOCAL_HTTP_PROXY_PORT"]}',
-        "handler": {"type": "http", "chain": "runner-chain"},
-        "listener": {"type": "tcp"},
-    }],
-    "chains": [{
-        "name": "runner-chain",
-        "hops": [{
-            "name": "runner-hop",
-            "nodes": [{
-                "name": "runner-upstream",
-                "addr": f"{url.hostname}:{url.port}",
-                "connector": connector,
-                "dialer": {"type": "tcp"},
-            }],
-        }],
-    }],
+    "services": [
+        {
+            "name": "runner-http-proxy",
+            "addr": f'{os.environ["LOCAL_HTTP_PROXY_HOST"]}:{os.environ["LOCAL_HTTP_PROXY_PORT"]}',
+            "handler": {"type": "http", "chain": "runner-chain"},
+            "listener": {"type": "tcp"},
+        },
+        {
+            "name": "runner-git-proxy",
+            "addr": f'{os.environ["LOCAL_HTTP_PROXY_HOST"]}:{os.environ["LOCAL_GIT_PROXY_PORT"]}',
+            "handler": {"type": "http", "chain": "git-chain"},
+            "listener": {"type": "tcp"},
+        },
+    ],
+    "chains": [
+        {
+            "name": "runner-chain",
+            "hops": [{"name": "socks-hop", "nodes": [socks_node("runner-upstream")]}],
+        },
+        {
+            "name": "git-chain",
+            "hops": [
+                {"name": "socks-hop", "nodes": [socks_node("git-socks-upstream")]},
+                {
+                    "name": "git-egress-hop",
+                    "nodes": [{
+                        "name": "git-egress",
+                        "addr": f'{os.environ["GIT_EGRESS_HOST"]}:{os.environ["GIT_EGRESS_PORT"]}',
+                        "connector": {
+                            "type": "http",
+                            "auth": {
+                                "username": os.environ["GIT_EGRESS_USERNAME"],
+                                "password": token,
+                            },
+                        },
+                        "dialer": {"type": "tls"},
+                    }],
+                },
+            ],
+        },
+    ],
     "log": {
         "output": "stderr",
         "level": os.environ["GOST_LOG_LEVEL"],
@@ -211,16 +231,19 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY ftp_prox
 "$GOST_BIN" -C "$gost_config" >"$log_dir/gost.log" 2>&1 &
 bridge_pid=$!
 
-"$toolchain/python" - "$LOCAL_HTTP_PROXY_HOST" "$LOCAL_HTTP_PROXY_PORT" <<'PY'
+"$toolchain/python" - "$LOCAL_HTTP_PROXY_HOST" "$LOCAL_HTTP_PROXY_PORT" "$LOCAL_GIT_PROXY_PORT" <<'PY'
 import socket, sys, time
-host, port = sys.argv[1], int(sys.argv[2])
-for _ in range(100):
-    try:
-        with socket.create_connection((host, port), timeout=.2):
-            raise SystemExit(0)
-    except OSError:
-        time.sleep(.05)
-raise SystemExit("local HTTP proxy did not become ready")
+host = sys.argv[1]
+ports = [int(value) for value in sys.argv[2:]]
+for port in ports:
+    for _ in range(100):
+        try:
+            with socket.create_connection((host, port), timeout=.2):
+                break
+        except OSError:
+            time.sleep(.05)
+    else:
+        raise SystemExit(f"local HTTP proxy did not become ready: {port}")
 PY
 rm -f "$gost_config"
 

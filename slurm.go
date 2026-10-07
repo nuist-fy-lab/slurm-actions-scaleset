@@ -27,7 +27,7 @@ type commandSlurm struct {
 }
 
 func (s *commandSlurm) Submit(ctx context.Context, runnerName, jitFile string) (int, error) {
-	jobName := "ghss-" + runnerName
+	jobName := slurmJobPrefix(s.cfg.ScaleSetName) + runnerName
 	logDir := filepath.Join(s.cfg.StateDir, "slurm")
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return 0, fmt.Errorf("create Slurm log directory: %w", err)
@@ -79,10 +79,31 @@ func (s *commandSlurm) Active(ctx context.Context) (map[string]slurmJob, error) 
 	if err != nil {
 		return nil, fmt.Errorf("list Slurm jobs: %w", err)
 	}
-	return parseActiveJobs(string(out)), nil
+	return parseActiveJobs(string(out), slurmJobPrefix(s.cfg.ScaleSetName)), nil
 }
 
-func parseActiveJobs(input string) map[string]slurmJob {
+func slurmJobPrefix(scaleSetName string) string {
+	var b strings.Builder
+	b.WriteString("ghss-")
+	for _, r := range scaleSetName {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	b.WriteByte('-')
+	return b.String()
+}
+
+func parseActiveJobs(input, prefix string) map[string]slurmJob {
 	jobs := make(map[string]slurmJob)
 	scanner := bufio.NewScanner(strings.NewReader(input))
 	for scanner.Scan() {
@@ -91,14 +112,14 @@ func parseActiveJobs(input string) map[string]slurmJob {
 			continue
 		}
 		parts := strings.SplitN(line, "|", 2)
-		if len(parts) != 2 || !strings.HasPrefix(parts[1], "ghss-") {
+		if len(parts) != 2 || !strings.HasPrefix(parts[1], prefix) {
 			continue
 		}
 		jobID, err := strconv.Atoi(parts[0])
 		if err != nil {
 			continue
 		}
-		runnerName := strings.TrimPrefix(parts[1], "ghss-")
+		runnerName := strings.TrimPrefix(parts[1], prefix)
 		jobs[runnerName] = slurmJob{ID: jobID, RunnerName: runnerName}
 	}
 	return jobs

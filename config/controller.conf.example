@@ -11,4 +11,4 @@ HEARTBEAT_FILE="$STATE_DIR/heartbeat"
 LOG_FORMAT='json'
 WATCHDOG_SERVICE='slurm-actions-scaleset.service'
 WATCHDOG_HEARTBEAT_MAX_AGE='120'
-SLURM_JOB_PREFIX='ghss-c2ln1-'
+SLURM_JOB_PREFIX='ghss-c2ln1-p1shr-'

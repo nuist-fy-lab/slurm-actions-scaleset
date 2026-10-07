@@ -41,6 +41,7 @@ test -r "$runtime_config"
 : "${GIT_EGRESS_HOST:?GIT_EGRESS_HOST is required}"
 : "${GIT_EGRESS_PORT:?GIT_EGRESS_PORT is required}"
 : "${GIT_EGRESS_USERNAME:?GIT_EGRESS_USERNAME is required}"
+: "${GIT_EGRESS_TLS_SECURE:?GIT_EGRESS_TLS_SECURE is required}"
 : "${EGRESS_TOKEN_FILE:?EGRESS_TOKEN_FILE is required}"
 : "${EGRESS_ENV_FILE:?EGRESS_ENV_FILE is required}"
 
@@ -128,11 +129,15 @@ fi
 
 . "$home/.bash_proxy"
 proxy set >/dev/null
+upstream_proxy="$https_proxy"
+
+# The authenticated SOCKS URL must not leak into child argv/environment.
+unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY ftp_proxy FTP_PROXY
 
 # Convert the authenticated SOCKS endpoint produced by `proxy set` into a
 # loopback HTTP CONNECT proxy for Node-based Actions. The upstream credential
-# is written only to an owner-readable per-job config, never to process argv.
-UPSTREAM_PROXY_URL="$https_proxy" \
+# is streamed over a private file descriptor into the config generator and
+# written only to an owner-readable per-job config, never to process argv/env.
 GOST_CONFIG="$gost_config" \
 LOCAL_HTTP_PROXY_HOST="$LOCAL_HTTP_PROXY_HOST" \
 LOCAL_HTTP_PROXY_PORT="$LOCAL_HTTP_PROXY_PORT" \
@@ -140,15 +145,17 @@ LOCAL_GIT_PROXY_PORT="$LOCAL_GIT_PROXY_PORT" \
 GIT_EGRESS_HOST="$GIT_EGRESS_HOST" \
 GIT_EGRESS_PORT="$GIT_EGRESS_PORT" \
 GIT_EGRESS_USERNAME="$GIT_EGRESS_USERNAME" \
+GIT_EGRESS_TLS_SECURE="$GIT_EGRESS_TLS_SECURE" \
 EGRESS_TOKEN_FILE="$EGRESS_TOKEN_FILE" \
 GOST_LOG_LEVEL="${GOST_LOG_LEVEL:-warn}" \
-"$toolchain/python" <<'PY'
+"$toolchain/python" 3<<<"$upstream_proxy" <<'PY'
 import json
 import os
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-url = urlsplit(os.environ["UPSTREAM_PROXY_URL"])
+with os.fdopen(3) as stream:
+    url = urlsplit(stream.read().strip())
 if url.scheme not in {"socks5", "socks5h"} or not url.hostname or not url.port:
     raise SystemExit("proxy set did not produce a usable SOCKS5 endpoint")
 
@@ -162,6 +169,7 @@ if url.username is not None or url.password is not None:
 token = Path(os.environ["EGRESS_TOKEN_FILE"]).read_text().strip()
 if not token:
     raise SystemExit("egress token is empty")
+tls_secure = os.environ["GIT_EGRESS_TLS_SECURE"].lower() in {"1", "true", "yes", "on"}
 
 def socks_node(name):
     return {
@@ -207,7 +215,13 @@ config = {
                                 "password": token,
                             },
                         },
-                        "dialer": {"type": "tls"},
+                        "dialer": {
+                            "type": "tls",
+                            "tls": {
+                                "secure": tls_secure,
+                                "serverName": os.environ["GIT_EGRESS_HOST"],
+                            },
+                        },
                     }],
                 },
             ],
@@ -224,9 +238,7 @@ path = Path(os.environ["GOST_CONFIG"])
 path.write_text(json.dumps(config))
 path.chmod(0o600)
 PY
-
-# Do not leak the authenticated upstream proxy into the GOST environment.
-unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY ftp_proxy FTP_PROXY
+unset upstream_proxy
 
 "$GOST_BIN" -C "$gost_config" >"$log_dir/gost.log" 2>&1 &
 bridge_pid=$!

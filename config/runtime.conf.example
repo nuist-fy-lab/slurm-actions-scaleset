@@ -13,5 +13,6 @@ GIT_TARGET_URL_PREFIX='https://github.com'
 GIT_EGRESS_HOST='git.rs.fyzure.fyi'
 GIT_EGRESS_PORT='443'
 GIT_EGRESS_USERNAME='token'
+GIT_EGRESS_TLS_SECURE='true'
 EGRESS_TOKEN_FILE="$HOME/.config/fyzure-egress/token"
 EGRESS_ENV_FILE="$HOME/.config/fyzure-egress/env.sh"

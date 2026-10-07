@@ -69,6 +69,12 @@ if [[ -d "$shared_tool_cache" ]]; then
     mkdir -p "$tool_cache/$tool_name"
     for version_dir in "$tool_dir"/*; do
       [[ -d "$version_dir" ]] || continue
+      # Only expose administrator-completed immutable cache entries. An
+      # incomplete shared version must never become a writable target for
+      # setup-* actions from multiple concurrent runners.
+      if ! find "$version_dir" -maxdepth 1 -type f -name '*.complete' -print -quit | grep -q .; then
+        continue
+      fi
       ln -sfn "$version_dir" "$tool_cache/$tool_name/$(basename "$version_dir")"
     done
   done

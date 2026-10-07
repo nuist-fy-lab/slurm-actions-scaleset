@@ -4,12 +4,14 @@ set -euo pipefail
 runner_name=''
 jit_file=''
 runner_archive=''
+state_dir=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --runner-name) runner_name="$2"; shift 2 ;;
     --jit-file) jit_file="$2"; shift 2 ;;
     --runner-archive) runner_archive="$2"; shift 2 ;;
+    --state-dir) state_dir="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -17,6 +19,7 @@ done
 test -n "$runner_name"
 test -r "$jit_file"
 test -r "$runner_archive"
+test -n "$state_dir"
 
 export USER="${USER:-$(id -un)}"
 home="$(getent passwd "$(id -u)" | cut -d: -f6)"
@@ -25,7 +28,9 @@ export HOME="$home"
 toolchain="$home/.local/opt/github-runner-toolchain/bin"
 lib="$home/.local/lib/slurm-actions-scaleset"
 run_dir="/tmp/github-scale-set-${SLURM_JOB_ID}-${runner_name}"
-log_dir="$home/.local/state/slurm-actions-scaleset/runners/${runner_name}-${SLURM_JOB_ID}"
+log_dir="$state_dir/runners/${runner_name}-${SLURM_JOB_ID}"
+toolchain_lock="$home/.local/state/slurm-actions-scaleset/toolchain.lock"
+job_git_config="$run_dir/gitconfig"
 bridge_pid=''
 
 cleanup() {
@@ -42,10 +47,28 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$run_dir" "$log_dir"
+mkdir -p "$run_dir" "$log_dir" "$(dirname "$toolchain_lock")"
+
+# Runner jobs may share one read-only toolchain, while maintenance takes an
+# exclusive lock before mutating it.
+exec 8>"$toolchain_lock"
+flock -s 8
+
 tar -xzf "$runner_archive" -C "$run_dir"
 
 export PATH="$toolchain:$home/.local/bin:$PATH"
+
+# Keep mutable per-job tool state off the shared home configuration so up to
+# four concurrent runners cannot race on ~/.gitconfig or Mamba caches.
+: >"$job_git_config"
+chmod 600 "$job_git_config"
+export GIT_CONFIG_GLOBAL="$job_git_config"
+export MAMBA_ROOT_PREFIX="$run_dir/mamba-root"
+export CONDA_PKGS_DIRS="$run_dir/conda-pkgs"
+if command -v git-lfs >/dev/null 2>&1; then
+  git lfs install --skip-repo >/dev/null
+fi
+
 . "$home/.bash_proxy"
 proxy set direct >/dev/null
 git_proxy="$https_proxy"

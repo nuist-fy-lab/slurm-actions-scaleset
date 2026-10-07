@@ -16,3 +16,14 @@ Default c2ln1 policy:
 
 The controller is intended to run on the c2ln1 login node. Each runner executes
 on a Slurm compute node and consumes one job only.
+
+Runtime hardening:
+
+- the controller runs as a user systemd service with `KillMode=process`, so a
+  controller restart does not kill already-submitted Slurm jobs;
+- a one-minute watchdog checks controller heartbeat and enforces the hard
+  four-runner Slurm cap;
+- compute runners share the immutable toolchain under a shared file lock, while
+  each job gets its own Git global config, Mamba root, and Conda package cache;
+- the HTTP CONNECT-to-SOCKS bridge binds only to loopback and uses an ephemeral
+  local port per runner.

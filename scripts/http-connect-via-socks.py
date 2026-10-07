@@ -87,6 +87,8 @@ def relay(left, right):
                         view = view[sent:]
                     except (BlockingIOError, InterruptedError):
                         continue
+                    except OSError:
+                        return
     finally:
         selector.close()
 

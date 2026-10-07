@@ -47,6 +47,7 @@ func (s *commandSlurm) Submit(ctx context.Context, runnerName, jitFile string) (
 		"--runner-name", runnerName,
 		"--jit-file", jitFile,
 		"--runner-archive", s.cfg.RunnerArchive,
+		"--state-dir", s.cfg.StateDir,
 	}
 	out, err := exec.CommandContext(ctx, "sbatch", args...).Output()
 	if err != nil {

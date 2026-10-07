@@ -6,3 +6,7 @@ After=slurm-actions-scaleset.service
 Type=oneshot
 ExecStart=%h/.local/lib/slurm-actions-scaleset/watchdog.sh
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SLURM_ACTIONS_SCALESET_SERVICE=slurm-actions-scaleset.service
+Environment=SLURM_ACTIONS_SCALESET_MAX_RUNNERS=4
+Environment=SLURM_ACTIONS_SCALESET_HEARTBEAT_MAX_AGE=120
+Environment=SLURM_ACTIONS_SCALESET_JOB_PREFIX=ghss-c2ln1-

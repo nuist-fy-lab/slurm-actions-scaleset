@@ -56,14 +56,23 @@ flock -s 8
 
 tar -xzf "$runner_archive" -C "$run_dir"
 
-# setup-node checks the Actions tool cache before downloading. The verified
-# runner archive already ships Node.js 24.21.0 for JavaScript actions, so make
-# that exact runtime available to setup-node inside this ephemeral job.
+# setup-* actions check the Actions tool cache before downloading. Populate
+# each ephemeral job with read-only links to centrally managed cached tools.
+# Versions not present here remain job-local and can still be downloaded.
 tool_cache="$run_dir/_work/_tool"
-node_cache="$tool_cache/node/24.21.0"
-mkdir -p "$node_cache"
-ln -sfn "$run_dir/externals/node24" "$node_cache/x64"
-touch "$node_cache/x64.complete"
+shared_tool_cache="$home/.local/share/github-actions-toolcache"
+mkdir -p "$tool_cache"
+if [[ -d "$shared_tool_cache" ]]; then
+  for tool_dir in "$shared_tool_cache"/*; do
+    [[ -d "$tool_dir" ]] || continue
+    tool_name="$(basename "$tool_dir")"
+    mkdir -p "$tool_cache/$tool_name"
+    for version_dir in "$tool_dir"/*; do
+      [[ -d "$version_dir" ]] || continue
+      ln -sfn "$version_dir" "$tool_cache/$tool_name/$(basename "$version_dir")"
+    done
+  done
+fi
 export RUNNER_TOOL_CACHE="$tool_cache"
 export AGENT_TOOLSDIRECTORY="$tool_cache"
 

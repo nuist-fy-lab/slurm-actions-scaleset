@@ -36,7 +36,9 @@ func newScaler(ctx context.Context, cfg config, logger *slog.Logger, scaleSetID 
 	}
 	runners := make(map[string]runnerState, len(active))
 	for name, job := range active {
-		runners[name] = runnerState{JobID: job.ID}
+		// Recovered allocations may already be executing work. Protect them
+		// from scale-down until GitHub delivers their completion event.
+		runners[name] = runnerState{JobID: job.ID, Busy: true}
 	}
 	return &scaler{
 		cfg:        cfg,
@@ -100,7 +102,7 @@ func (s *scaler) HandleDesiredRunnerCount(ctx context.Context, desired int) (int
 	}
 	for name, job := range active {
 		if _, ok := s.runners[name]; !ok {
-			s.runners[name] = runnerState{JobID: job.ID}
+			s.runners[name] = runnerState{JobID: job.ID, Busy: true}
 			s.logger.Info("recovered active Slurm runner", "runner", name, "slurmJobID", job.ID)
 		}
 	}

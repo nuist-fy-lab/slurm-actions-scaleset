@@ -12,7 +12,7 @@ ExecStartPre=/usr/bin/test -x %h/.local/bin/slurm-actions-scaleset
 ExecStartPre=/usr/bin/test -x %h/.local/bin/gost
 ExecStartPre=/usr/bin/test -r %h/.cache/github-actions-runner/actions-runner-linux-x64-2.338.0.tar.gz
 ExecStartPre=/usr/bin/test -x %h/.local/lib/slurm-actions-scaleset/compute-runner.sh
-ExecStart=%h/.local/bin/github-egress-run %h/.local/bin/slurm-actions-scaleset \
+ExecStart=%h/.local/bin/slurm-actions-scaleset \
   --url https://github.com/nuist-fy-lab/satellite-data \
   --name c2ln1-p1shr \
   --max-runners 4 \

@@ -56,6 +56,17 @@ flock -s 8
 
 tar -xzf "$runner_archive" -C "$run_dir"
 
+# setup-node checks the Actions tool cache before downloading. The verified
+# runner archive already ships Node.js 24.21.0 for JavaScript actions, so make
+# that exact runtime available to setup-node inside this ephemeral job.
+tool_cache="$run_dir/_work/_tool"
+node_cache="$tool_cache/node/24.21.0"
+mkdir -p "$node_cache"
+ln -sfn "$run_dir/externals/node24" "$node_cache/x64"
+touch "$node_cache/x64.complete"
+export RUNNER_TOOL_CACHE="$tool_cache"
+export AGENT_TOOLSDIRECTORY="$tool_cache"
+
 export PATH="$toolchain:$home/.local/bin:$PATH"
 
 # Keep mutable per-job tool state off the shared home configuration so up to

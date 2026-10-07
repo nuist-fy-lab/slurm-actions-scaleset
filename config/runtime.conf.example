@@ -15,4 +15,8 @@ GIT_EGRESS_PORT='443'
 GIT_EGRESS_USERNAME='token'
 GIT_EGRESS_TLS_SECURE='true'
 EGRESS_TOKEN_FILE="$HOME/.config/fyzure-egress/token"
-EGRESS_ENV_FILE="$HOME/.config/fyzure-egress/env.sh"
+
+# Compute nodes cannot directly reach the fyzure egress endpoints. Keep only
+# loopback addresses out of the local GOST proxy; pkg/git/gh/docker/ghcr stay
+# proxied on Runner jobs.
+RUNNER_NO_PROXY='localhost,127.0.0.1,::1'

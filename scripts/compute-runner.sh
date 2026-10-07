@@ -43,11 +43,10 @@ test -r "$runtime_config"
 : "${GIT_EGRESS_USERNAME:?GIT_EGRESS_USERNAME is required}"
 : "${GIT_EGRESS_TLS_SECURE:?GIT_EGRESS_TLS_SECURE is required}"
 : "${EGRESS_TOKEN_FILE:?EGRESS_TOKEN_FILE is required}"
-: "${EGRESS_ENV_FILE:?EGRESS_ENV_FILE is required}"
+: "${RUNNER_NO_PROXY:?RUNNER_NO_PROXY is required}"
 
 test -x "$GOST_BIN"
 test -r "$EGRESS_TOKEN_FILE"
-test -r "$EGRESS_ENV_FILE"
 
 toolchain="$TOOLCHAIN_BIN"
 run_dir="${RUNNER_WORK_ROOT%/}/github-scale-set-${SLURM_JOB_ID}-${runner_name}"
@@ -263,7 +262,8 @@ runner_proxy="http://${LOCAL_HTTP_PROXY_HOST}:${LOCAL_HTTP_PROXY_PORT}"
 export HTTP_PROXY="$runner_proxy" HTTPS_PROXY="$runner_proxy"
 export http_proxy="$runner_proxy" https_proxy="$runner_proxy"
 unset ALL_PROXY all_proxy FTP_PROXY ftp_proxy
-. "$EGRESS_ENV_FILE"
+export NO_PROXY="$RUNNER_NO_PROXY"
+export no_proxy="$RUNNER_NO_PROXY"
 
 export ACTIONS_RUNNER_INPUT_JITCONFIG="$(cat "$jit_file")"
 rm -f "$jit_file"

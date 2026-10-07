@@ -26,6 +26,11 @@ The compute runner writes Git and GOST credentials only to owner-readable,
 per-job temporary configuration files. Credentials are not passed in process
 arguments.
 
+Runner `NO_PROXY` is intentionally separate from the login-node environment.
+The c2ln1 compute nodes cannot directly reach the fyzure egress endpoints, so
+Runner jobs keep only loopback addresses in `NO_PROXY`; pkg/git/gh/docker/ghcr
+remain behind the local GOST chain.
+
 JavaScript actions receive a local HTTP CONNECT proxy provided by GOST, which
 forwards through the existing `proxy set direct` SOCKS5 tunnel on each compute
 node. Production currently pins GOST v3.3.0 (linux/amd64).

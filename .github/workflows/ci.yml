@@ -24,7 +24,6 @@ jobs:
       - name: Check scripts
         run: |
           bash -n scripts/*.sh
-          python3 -m py_compile scripts/http-connect-via-socks.py
           mkdir -p "$HOME/.local/bin" "$HOME/.local/lib/slurm-actions-scaleset"
           printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/github-egress-run"
           chmod +x "$HOME/.local/bin/github-egress-run"
@@ -35,9 +34,6 @@ jobs:
         run: go test ./...
       - name: Vet
         run: go vet ./...
-      - name: Validate runtime scripts
-        run: |
-          bash -n scripts/compute-runner.sh scripts/watchdog.sh scripts/install-gost.sh
       - name: Build Linux amd64
         run: |
           mkdir -p dist

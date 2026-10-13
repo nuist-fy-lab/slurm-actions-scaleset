@@ -40,6 +40,7 @@ func (s *commandSlurm) Submit(ctx context.Context, runnerName, jitFile string) (
 		"--ntasks=1",
 		fmt.Sprintf("--cpus-per-task=%d", s.cfg.CPUs),
 		"--mem=" + s.cfg.Memory,
+		"--time=" + s.cfg.TimeLimit,
 		"--output=" + filepath.Join(logDir, "%j.out"),
 		"--error=" + filepath.Join(logDir, "%j.err"),
 		"--export=NONE",

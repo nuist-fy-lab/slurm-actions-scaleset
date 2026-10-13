@@ -19,6 +19,7 @@ type config struct {
 	Partition       string
 	CPUs            int
 	Memory          string
+	TimeLimit       string
 	RunnerArchive   string
 	RunnerScript    string
 	StateDir        string
@@ -51,8 +52,9 @@ func parseConfig() (config, error) {
 	flag.StringVar(&cfg.RunnerGroup, "runner-group", "Default", "runner group name")
 	flag.IntVar(&cfg.MaxRunners, "max-runners", 4, "maximum concurrent runners")
 	flag.StringVar(&cfg.Partition, "partition", "p1shr", "Slurm partition")
-	flag.IntVar(&cfg.CPUs, "cpus", 40, "CPUs per runner")
-	flag.StringVar(&cfg.Memory, "memory", "16G", "memory per runner")
+	flag.IntVar(&cfg.CPUs, "cpus", 4, "CPUs per runner")
+	flag.StringVar(&cfg.Memory, "memory", "8G", "memory per runner")
+	flag.StringVar(&cfg.TimeLimit, "time-limit", "02:00:00", "Slurm job time limit (enables backfill for short CI jobs)")
 	flag.StringVar(&cfg.RunnerArchive, "runner-archive", "", "path to the verified GitHub Actions runner archive")
 	flag.StringVar(&cfg.RunnerScript, "runner-script", "", "compute-node runner bootstrap script")
 	flag.StringVar(&cfg.StateDir, "state-dir", "", "state directory")
@@ -103,6 +105,8 @@ func (c config) validate() error {
 		return errors.New("--partition is required")
 	case c.Memory == "":
 		return errors.New("--memory is required")
+	case c.TimeLimit == "":
+		return errors.New("--time-limit is required")
 	case c.RunnerArchive == "":
 		return errors.New("--runner-archive is required")
 	case c.RunnerScript == "":

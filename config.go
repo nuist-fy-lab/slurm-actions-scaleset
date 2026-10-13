@@ -54,7 +54,7 @@ func parseConfig() (config, error) {
 	flag.StringVar(&cfg.Partition, "partition", "p1shr", "Slurm partition")
 	flag.IntVar(&cfg.CPUs, "cpus", 4, "CPUs per runner")
 	flag.StringVar(&cfg.Memory, "memory", "8G", "memory per runner")
-	flag.StringVar(&cfg.TimeLimit, "time-limit", "02:00:00", "Slurm job time limit (enables backfill for short CI jobs)")
+	flag.StringVar(&cfg.TimeLimit, "time-limit", "00:30:00", "Slurm job time limit (enables backfill for short CI jobs)")
 	flag.StringVar(&cfg.RunnerArchive, "runner-archive", "", "path to the verified GitHub Actions runner archive")
 	flag.StringVar(&cfg.RunnerScript, "runner-script", "", "compute-node runner bootstrap script")
 	flag.StringVar(&cfg.StateDir, "state-dir", "", "state directory")

@@ -26,7 +26,10 @@ jobs:
       - name: Check scripts
         run: |
           bash -n scripts/*.sh
-          # Validate service files on the isolated GitHub-hosted runner.
+          # systemd-analyze expands %h to the CI user's HOME: stage the
+          # referenced executable scripts before validating unit files.
+          install -D -m 755 scripts/start-controller.sh "$HOME/.local/lib/slurm-actions-scaleset/start-controller.sh"
+          install -D -m 755 scripts/watchdog.sh "$HOME/.local/lib/slurm-actions-scaleset/watchdog.sh"
           systemd-analyze verify systemd/*.service systemd/*.timer
       - name: Test
         run: go test ./...

@@ -24,7 +24,8 @@ pool_args=()
 if [[ "${POOL_MODE:-false}" == 'true' ]]; then
   : "${POOL_SCRIPT:?POOL_SCRIPT is required}"
   : "${POOL_TIME_LIMIT:?POOL_TIME_LIMIT is required}"
-  pool_args=(--pool-mode --pool-script "$POOL_SCRIPT" --pool-time-limit "$POOL_TIME_LIMIT")
+  : "${POOL_IDLE_HOURS:?POOL_IDLE_HOURS is required}"
+  pool_args=(--pool-mode --pool-script "$POOL_SCRIPT" --pool-time-limit "$POOL_TIME_LIMIT" --pool-idle-hours "$POOL_IDLE_HOURS")
 fi
 
 exec "$HOME/.local/bin/slurm-actions-scaleset" \

@@ -32,6 +32,7 @@ type config struct {
 	PoolMode        bool
 	PoolScript      string
 	PoolTimeLimit   string
+	PoolIdleHours   int
 }
 
 type stringList []string
@@ -69,7 +70,8 @@ func parseConfig() (config, error) {
 	flag.DurationVar(&cfg.StartupTimeout, "startup-timeout", 3*time.Minute, "maximum time for a submitted runner to remain pending before reconciliation")
 	flag.BoolVar(&cfg.PoolMode, "pool-mode", false, "reuse one Slurm allocation for serial runners")
 	flag.StringVar(&cfg.PoolScript, "pool-script", "", "compute-node pool supervisor")
-	flag.StringVar(&cfg.PoolTimeLimit, "pool-time-limit", "3-00:00:00", "pool allocation wall-time (72h by default)")
+	flag.StringVar(&cfg.PoolTimeLimit, "pool-time-limit", "UNLIMITED", "Slurm hard wall-time for the pool, independent of inactivity")
+	flag.IntVar(&cfg.PoolIdleHours, "pool-idle-hours", 72, "release the allocation this many hours after the last CI finishes")
 	flag.Parse()
 
 	home, err := os.UserHomeDir()
@@ -129,6 +131,8 @@ func (c config) validate() error {
 		return errors.New("pool requires 4 CPUs and 8G memory")
 	case c.PoolMode && c.PoolTimeLimit == "":
 		return errors.New("pool requires a walltime")
+	case c.PoolMode && (c.PoolIdleHours < 1 || c.PoolIdleHours > 168):
+		return errors.New("pool idle lifetime must be within 1..168 hours")
 	}
 	return nil
 }

@@ -23,18 +23,26 @@ on a Slurm compute node and consumes one job only.
 For frequent short CI jobs, set `POOL_MODE='true'` in the organization
 controller configuration, install `scripts/pool-worker.sh`, and set
 `POOL_SCRIPT` to its absolute path. Keep `MAX_RUNNERS=1`, `PARTITION=p1shr`,
-`CPUS=4`, and `MEMORY=8G`. `POOL_TIME_LIMIT='3-00:00:00'` reserves one 4C8G
-allocation for 72 hours at a time. Only enable this where persistent idle
-allocations are permitted by the HPC center's rules.
+`CPUS=4`, and `MEMORY=8G`. `POOL_IDLE_HOURS='72'` is a rolling idle lease:
+after each GitHub CI job completes the full 72-hour inactivity window starts
+again. When 72 hours pass without another CI job, the worker exits naturally
+and releases the reserved 4C8G allocation. With no CI pending, the controller
+does **not** allocate a replacement. The next CI automatically submits a new
+allocation, which may wait in the Slurm queue. Only enable persistent idle
+allocations where this is permitted by the HPC center's rules.
 
-The login-node controller proactively requests exactly one Slurm pool job.
+The login-node controller submits at most one Slurm pool job on demand.
 When admitted, the compute-node pool processes `.req` markers from a private
 directory in shared storage and starts a fresh one-job GitHub JIT runner for
 each request. After the runner and its cleanup exit, the shared allocation
-remains alive for the next request. The pool automatically resubmits after
-its Slurm time limit, but reacquisition may queue; this is not an uninterrupted
-reservation. A CI run in flight when the wall-time expires can be terminated,
-so production rollout must account for the pool wall-time and job duration.
+remains alive for the next request. `POOL_TIME_LIMIT='UNLIMITED'` (the default)
+separates Slurm's hard walltime from the rolling idle lease, if the partition
+and account policy permit unlimited allocation duration. Set a finite hard
+walltime only if required by the HPC administrators; hitting that hard limit
+still ends the allocation even with recent CI activity. Worker admission
+reserves at least 35 minutes before a finite hard deadline for the 30-minute
+CI job plus cleanup. A Slurm allocation is never guaranteed against node
+failure, administrator intervention, or preemption.
 
 Stop the controller before changing modes. Do not enable the pool while an
 old one-shot CI Slurm allocation remains active: drain or explicitly handle

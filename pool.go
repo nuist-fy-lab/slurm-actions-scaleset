@@ -88,6 +88,7 @@ func (p *poolSlurm) ensureLocked(ctx context.Context) (int, error) {
 		"--error=" + filepath.Join(logDir, "%j.err"),
 		"--export=NONE", p.cfg.PoolScript,
 		"--pool-dir", p.dir(), "--runner-script", p.cfg.RunnerScript,
+		"--idle-seconds", strconv.Itoa(p.cfg.PoolIdleHours * 3600),
 		"--runner-archive", p.cfg.RunnerArchive, "--state-dir", p.cfg.StateDir,
 	}
 	out, err := exec.CommandContext(ctx, "sbatch", args...).Output()
@@ -135,11 +136,14 @@ func (p *poolSlurm) Submit(ctx context.Context, name, jitFile string) (int, erro
 func (p *poolSlurm) Active(ctx context.Context) (map[string]slurmJob, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	id, err := p.ensureLocked(ctx)
+	id, err := p.find(ctx)
 	if err != nil {
 		return nil, err
 	}
 	entries, err := os.ReadDir(filepath.Join(p.dir(), "requests"))
+	if os.IsNotExist(err) {
+		return map[string]slurmJob{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +164,17 @@ func (p *poolSlurm) Active(ctx context.Context) (map[string]slurmJob, error) {
 		}
 		name = strings.TrimSuffix(name, suffix)
 		if strings.HasPrefix(name, "c2ln1-") {
+			active[name] = slurmJob{ID: id, RunnerName: name}
+		}
+	}
+	// Recover a queued request if an allocation exited unexpectedly. In the
+	// ordinary idle case (no work), do not allocate a replacement.
+	if id == 0 && len(active) > 0 {
+		id, err = p.ensureLocked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for name := range active {
 			active[name] = slurmJob{ID: id, RunnerName: name}
 		}
 	}

@@ -29,9 +29,15 @@ func TestPoolReusesOneSlurmAllocationForMultipleRunners(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cfg := config{StateDir: filepath.Join(tmp, "state"), ScaleSetName: "c2ln1-org-c2ln1", Partition: "p1shr", CPUs: 4, Memory: "8G", PoolTimeLimit: "3-00:00:00", PoolScript: "/bin/false", RunnerScript: "/bin/true", RunnerArchive: "/tmp/archive"}
+	cfg := config{StateDir: filepath.Join(tmp, "state"), ScaleSetName: "c2ln1-org-c2ln1", Partition: "p1shr", CPUs: 4, Memory: "8G", PoolIdleHours: 72, PoolTimeLimit: "UNLIMITED", PoolScript: "/bin/false", RunnerScript: "/bin/true", RunnerArchive: "/tmp/archive"}
 	p := &poolSlurm{cfg: cfg, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	ctx := context.Background()
+	if active, err := p.Active(ctx); err != nil || len(active) != 0 {
+		t.Fatalf("no CI request must not allocate a warm Slurm slot: %v, %v", active, err)
+	}
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		t.Fatalf("idle controller unexpectedly submitted Slurm job: %v", err)
+	}
 	if err := p.Ensure(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +75,23 @@ func TestPoolReusesOneSlurmAllocationForMultipleRunners(t *testing.T) {
 	if err := p.Cancel(ctx, 123); err == nil {
 		t.Fatal("runner cancellation must never cancel a shared Slurm allocation")
 	}
+	if err := os.Remove(state); err != nil {
+		t.Fatal(err)
+	}
+	if active, err := p.Active(ctx); err != nil || len(active) != 0 {
+		t.Fatalf("expired pool must remain released without CI: %v %v", active, err)
+	}
+	data, err = os.ReadFile(calls)
+	if err != nil || strings.Count(string(data), "call") != 1 {
+		t.Fatalf("idle pool was automatically resubmitted: %q %v", data, err)
+	}
+	if err := p.Submit(ctx, "c2ln1-1234abcd", filepath.Join(cfg.StateDir, "jit", "c2ln1-1234abcd.jit")); err != nil {
+		t.Fatalf("new CI after expiry should allocate another pool: %v", err)
+	}
+	data, err = os.ReadFile(calls)
+	if err != nil || strings.Count(string(data), "call") != 2 {
+		t.Fatalf("new CI must cause exactly one new allocation: %q %v", data, err)
+	}
 	if err := os.WriteFile(state, []byte("999|ghss-c2ln1-org-c2ln1-c2ln1-oldrunner\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +101,7 @@ func TestPoolReusesOneSlurmAllocationForMultipleRunners(t *testing.T) {
 }
 
 func TestPoolEnforcesAuthorizedCapacity(t *testing.T) {
-	cfg := config{RegistrationURL: "https://github.com/test", ScaleSetName: "pool", MaxRunners: 1, Partition: "p1shr", CPUs: 4, Memory: "8G", TimeLimit: "00:30:00", RunnerScript: "runner", PoolScript: "pool", PoolTimeLimit: "3-00:00:00", RunnerArchive: "runner.tar.gz", PoolMode: true}
+	cfg := config{RegistrationURL: "https://github.com/test", ScaleSetName: "pool", MaxRunners: 1, Partition: "p1shr", CPUs: 4, Memory: "8G", TimeLimit: "00:30:00", RunnerScript: "runner", PoolScript: "pool", PoolIdleHours: 72, PoolTimeLimit: "UNLIMITED", RunnerArchive: "runner.tar.gz", PoolMode: true}
 	if err := cfg.validate(); err != nil {
 		t.Fatal(err)
 	}

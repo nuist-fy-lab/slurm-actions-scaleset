@@ -6,24 +6,28 @@ pool_dir=''
 runner_script=''
 runner_archive=''
 state_dir=''
+idle_seconds=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --pool-dir) pool_dir="$2"; shift 2 ;;
     --runner-script) runner_script="$2"; shift 2 ;;
     --runner-archive) runner_archive="$2"; shift 2 ;;
     --state-dir) state_dir="$2"; shift 2 ;;
+    --idle-seconds) idle_seconds="$2"; shift 2 ;;
     *) echo "unknown pool argument: $1" >&2; exit 2 ;;
   esac
 done
 
 : "${SLURM_JOB_ID:?pool worker must run under Slurm}"
 [[ -n "$pool_dir" && -n "$state_dir" && -x "$runner_script" && -r "$runner_archive" ]]
+[[ "$idle_seconds" =~ ^[0-9]+$ ]] && (( idle_seconds > 0 ))
 
 request_dir="$pool_dir/requests"
 mkdir -p "$request_dir"
 chmod 700 "$pool_dir" "$request_dir"
 active_file=''
 child_pid=''
+last_activity="$(date +%s)"
 
 cleanup() {
   trap - TERM INT
@@ -52,6 +56,9 @@ echo "$(date -Is) reusable runner pool online slurm_job=$SLURM_JOB_ID"
 enough_time_left() {
   local left days=0 clock
   left="$(squeue -h -j "$SLURM_JOB_ID" -o '%L' 2>/dev/null)" || return 1
+  if [[ "$left" == 'UNLIMITED' ]]; then
+    return 0
+  fi
   clock="$left"
   if [[ "$left" == *-* ]]; then
     days="${left%%-*}"
@@ -91,7 +98,19 @@ while :; do
     child_pid=''
     rm -f -- "$active_file"
     active_file=''
+    last_activity="$(date +%s)"
+    echo "$(date -Is) CI finished; renewed idle lease for ${idle_seconds}s"
   done
+  # Do not release while an assigned request is waiting. A request arriving
+  # after an idle period gets priority over the idle expiry decision.
+  pending=false
+  for request in "$request_dir"/*.req "$request_dir"/*.running; do
+    if [[ -f "$request" ]]; then pending=true; break; fi
+  done
+  if [[ "$pending" == false ]] && (( $(date +%s) - last_activity >= idle_seconds )); then
+    echo "$(date -Is) idle lease expired after ${idle_seconds}s; releasing Slurm allocation"
+    exit 0
+  fi
   sleep 2 &
   child_pid=$!
   wait "$child_pid" || true

@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
@@ -159,20 +158,6 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	if cfg.PoolMode {
 		pool := &poolSlurm{cfg: cfg, logger: logger.WithGroup("pool")}
 		slurm = pool
-		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				if err := pool.Ensure(ctx); err != nil && ctx.Err() == nil {
-					logger.Warn("pool check failed", "error", err)
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-				}
-			}
-		}()
 	}
 	scaler, err := newScaler(ctx, cfg, logger.WithGroup("scaler"), set.ID, client, slurm, func() error {
 		return writeHeartbeat(cfg.HeartbeatFile)

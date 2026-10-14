@@ -16,7 +16,7 @@ mkdir -p "$tmp/bin" "$tmp/pool/requests" "$tmp/state/jit"
 printf 'archive' >"$tmp/runner.tar.gz"
 cat >"$tmp/bin/squeue" <<'SCRIPT'
 #!/bin/sh
-echo '2-23:59:55'
+echo 'UNLIMITED'
 SCRIPT
 cat >"$tmp/bin/runner" <<'SCRIPT'
 #!/bin/sh
@@ -33,6 +33,7 @@ chmod 700 "$tmp/bin/squeue" "$tmp/bin/runner"
 export PATH="$tmp/bin:$PATH" TEST_RUNNER_LOG="$tmp/runner.log" SLURM_JOB_ID=123
 bash "$root/scripts/pool-worker.sh" \
   --pool-dir "$tmp/pool" --runner-script "$tmp/bin/runner" \
+  --idle-seconds 4 \
   --runner-archive "$tmp/runner.tar.gz" --state-dir "$tmp/state" \
   >"$tmp/pool.log" 2>&1 &
 worker_pid=$!
@@ -55,4 +56,17 @@ for name in c2ln1-aaaaaaaa c2ln1-bbbbbbbb; do
 done
 
 [[ "$(wc -l <"$tmp/runner.log")" == 2 ]]
-echo 'two CI jobs reused one live Slurm allocation successfully'
+sleep 2
+kill -0 "$worker_pid"
+for _ in $(seq 1 70); do
+  if ! kill -0 "$worker_pid" 2>/dev/null; then break; fi
+  sleep .1
+done
+if kill -0 "$worker_pid" 2>/dev/null; then
+  echo 'idle pool never released its allocation' >&2
+  exit 1
+fi
+wait "$worker_pid"
+worker_pid=''
+grep -q 'idle lease expired' "$tmp/pool.log"
+echo 'two CI jobs shared an allocation and idle expiry released it'

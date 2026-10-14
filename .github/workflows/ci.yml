@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   test-build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, c2ln1-org]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6

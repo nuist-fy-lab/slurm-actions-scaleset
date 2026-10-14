@@ -70,14 +70,18 @@ func (s *scaler) HandleJobCompleted(ctx context.Context, completed *scaleset.Job
 	}
 	s.mu.Lock()
 	state, ok := s.runners[completed.RunnerName]
-	delete(s.runners, completed.RunnerName)
-	s.mu.Unlock()
-	s.logger.Info("job completed", "runner", completed.RunnerName, "jobID", completed.JobID)
-	if ok && state.JobID > 0 {
-		if err := s.slurm.Cancel(context.WithoutCancel(ctx), state.JobID); err != nil {
-			s.logger.Warn("failed to cancel completed Slurm runner", "slurmJobID", state.JobID, "error", err)
-		}
+	if ok {
+		// A GitHub job completion event can arrive before the ephemeral
+		// runner process has finished cleaning up. Keep its Slurm slot
+		// occupied until squeue confirms that the allocation has exited.
+		// In particular, never scancel a successful one-shot runner:
+		// it would turn an otherwise COMPLETED Slurm job into CANCELLED.
+		state.Busy = true
+		s.runners[completed.RunnerName] = state
 	}
+	s.mu.Unlock()
+	s.logger.Info("job completed; waiting for Slurm runner to exit naturally",
+		"runner", completed.RunnerName, "jobID", completed.JobID, "slurmJobID", state.JobID)
 	_ = os.Remove(filepath.Join(s.cfg.StateDir, "jit", completed.RunnerName+".jit"))
 	return nil
 }

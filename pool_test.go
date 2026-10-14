@@ -85,7 +85,7 @@ func TestPoolReusesOneSlurmAllocationForMultipleRunners(t *testing.T) {
 	if err != nil || strings.Count(string(data), "call") != 1 {
 		t.Fatalf("idle pool was automatically resubmitted: %q %v", data, err)
 	}
-	if err := p.Submit(ctx, "c2ln1-1234abcd", filepath.Join(cfg.StateDir, "jit", "c2ln1-1234abcd.jit")); err != nil {
+	if _, err := p.Submit(ctx, "c2ln1-1234abcd", filepath.Join(cfg.StateDir, "jit", "c2ln1-1234abcd.jit")); err != nil {
 		t.Fatalf("new CI after expiry should allocate another pool: %v", err)
 	}
 	data, err = os.ReadFile(calls)

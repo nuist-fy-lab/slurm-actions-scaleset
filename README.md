@@ -12,7 +12,7 @@ Default c2ln1 policy:
 - CPU per runner: `4`
 - memory per runner: `8G`
 - Slurm wall-time limit: `00:30:00` (allows shorter backfill windows, instead of unlimited time)
-- maximum concurrent runners: `4`
+- maximum concurrent runners: `1` (serial Slurm allocations)
 - runner mode: ephemeral JIT
 
 The controller is intended to run on the c2ln1 login node. Each runner executes
@@ -41,7 +41,10 @@ Runtime hardening:
 - the controller runs as a user systemd service with `KillMode=process`, so a
   controller restart does not kill already-submitted Slurm jobs;
 - a one-minute watchdog checks controller heartbeat and enforces the hard
-  four-runner Slurm cap;
+  one-runner Slurm cap;
+- after a GitHub job completes, the ephemeral runner exits naturally so Slurm
+  records `COMPLETED`; explicit idle scale-down still uses cancellation;
+- CI never writes to the shared production `$HOME` on compute nodes;
 - compute runners share the immutable toolchain under a shared file lock, while
   each job gets its own Git global config, Mamba root, and Conda package cache;
 - the HTTP CONNECT-to-SOCKS bridge binds only to loopback and uses an ephemeral

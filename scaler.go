@@ -15,7 +15,14 @@ import (
 
 type runnerState struct {
 	JobID int
+	// Busy protects a submitted or recovered one-shot runner until Slurm
+	// confirms that it exited, even before GitHub sends JobStarted.
+	// Delayed Slurm admission must never make a JIT runner cancellable.
 	Busy  bool
+}
+
+func newSubmittedRunnerState(jobID int) runnerState {
+	return runnerState{JobID: jobID, Busy: true}
 }
 
 type scaler struct {
@@ -169,7 +176,7 @@ func (s *scaler) startRunnerLocked(ctx context.Context) error {
 		_ = os.Remove(jitFile)
 		return err
 	}
-	s.runners[name] = runnerState{JobID: jobID}
+	s.runners[name] = newSubmittedRunnerState(jobID)
 	s.logger.Info("submitted runner", "runner", name, "slurmJobID", jobID, "active", len(s.runners), "max", s.cfg.MaxRunners)
 	return nil
 }

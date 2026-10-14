@@ -3,13 +3,15 @@ name: CI
 on:
   push:
     branches: ['**']
-  pull_request:
 
 permissions:
   contents: read
 
 jobs:
   test-build:
+    # Only organization repository pushes can run on c2ln1. In particular,
+    # never enable pull_request or pull_request_target on this public repo:
+    # fork authors could otherwise alter the workflow before CI runs.
     runs-on: [self-hosted, c2ln1-org]
     steps:
       - uses: actions/checkout@v5

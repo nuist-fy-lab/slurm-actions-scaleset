@@ -84,3 +84,45 @@ func TestIdleScaleDownStillCancelsUnusedRunner(t *testing.T) {
 		t.Fatalf("unused runner should still be cancelled, got %d calls", slurm.cancelCalls)
 	}
 }
+
+// GitHub can momentarily request zero runners while a JIT allocation spends
+// minutes in Slurm pending and while the launched runner registers. That does
+// not mean the just-submitted runner is safe to cancel: the assignment can
+// arrive after the scale-down signal.
+func TestNewlySubmittedRunnerNeverScancelledBeforeAssignment(t *testing.T) {
+	ctx := context.Background()
+	slurm := &completionSlurm{
+		active: map[string]slurmJob{"pending-runner": {ID: 789, RunnerName: "pending-runner"}},
+	}
+	s := &scaler{
+		cfg:       config{StateDir: t.TempDir(), MaxRunners: 1},
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slurm:     slurm,
+		runners:   map[string]runnerState{"pending-runner": newSubmittedRunnerState(789)},
+		heartbeat: func() error { return nil },
+	}
+	for i := 0; i < 3; i++ {
+		if count, err := s.HandleDesiredRunnerCount(ctx, 0); err != nil || count != 1 {
+			t.Fatalf("pending runner cancelled on scale-down check %d: count=%d err=%v", i, count, err)
+		}
+	}
+	if slurm.cancelCalls != 0 {
+		t.Fatalf("submitted JIT runner must be allowed to register, got %d cancellations", slurm.cancelCalls)
+	}
+	if err := s.HandleJobStarted(ctx, &scaleset.JobStarted{RunnerName: "pending-runner"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.HandleJobCompleted(ctx, &scaleset.JobCompleted{RunnerName: "pending-runner"}); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := s.HandleDesiredRunnerCount(ctx, 0); err != nil || count != 1 {
+		t.Fatalf("completed ephemeral runner must exit naturally: count=%d err=%v", count, err)
+	}
+	slurm.active = map[string]slurmJob{}
+	if count, err := s.HandleDesiredRunnerCount(ctx, 0); err != nil || count != 0 {
+		t.Fatalf("exited runner was not reaped: count=%d err=%v", count, err)
+	}
+	if slurm.cancelCalls != 0 {
+		t.Fatalf("one-shot runner was cancelled %d times", slurm.cancelCalls)
+	}
+}

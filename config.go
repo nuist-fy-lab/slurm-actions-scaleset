@@ -69,7 +69,7 @@ func parseConfig() (config, error) {
 	flag.DurationVar(&cfg.StartupTimeout, "startup-timeout", 3*time.Minute, "maximum time for a submitted runner to remain pending before reconciliation")
 	flag.BoolVar(&cfg.PoolMode, "pool-mode", false, "reuse one Slurm allocation for serial runners")
 	flag.StringVar(&cfg.PoolScript, "pool-script", "", "compute-node pool supervisor")
-	flag.StringVar(&cfg.PoolTimeLimit, "pool-time-limit", "04:00:00", "pool allocation wall-time")
+	flag.StringVar(&cfg.PoolTimeLimit, "pool-time-limit", "3-00:00:00", "pool allocation wall-time (72h by default)")
 	flag.Parse()
 
 	home, err := os.UserHomeDir()

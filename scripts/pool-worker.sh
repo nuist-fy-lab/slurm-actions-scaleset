@@ -50,11 +50,16 @@ echo "$(date -Is) reusable runner pool online slurm_job=$SLURM_JOB_ID"
 # Reserve time for the longest (30-minute) CI run and cleanup before starting.
 # Query only when work arrives, not on each idle poll.
 enough_time_left() {
-  local left
+  local left days=0 clock
   left="$(squeue -h -j "$SLURM_JOB_ID" -o '%L' 2>/dev/null)" || return 1
-  if [[ "$left" =~ ^([0-9]+):([0-9]{2}):([0-9]{2})$ ]]; then
+  clock="$left"
+  if [[ "$left" == *-* ]]; then
+    days="${left%%-*}"
+    clock="${left#*-}"
+  fi
+  if [[ "$days" =~ ^[0-9]+$ && "$clock" =~ ^([0-9]+):([0-9]{2}):([0-9]{2})$ ]]; then
     local hrs="${BASH_REMATCH[1]}" mins="${BASH_REMATCH[2]}" secs="${BASH_REMATCH[3]}"
-    (( 10#$hrs * 3600 + 10#$mins * 60 + 10#$secs >= 2100 ))
+    (( 10#$days * 86400 + 10#$hrs * 3600 + 10#$mins * 60 + 10#$secs >= 2100 ))
     return $?
   fi
   return 1

@@ -29,7 +29,7 @@ func TestPoolReusesOneSlurmAllocationForMultipleRunners(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cfg := config{StateDir: filepath.Join(tmp, "state"), ScaleSetName: "c2ln1-org-c2ln1", Partition: "p1shr", CPUs: 4, Memory: "8G", PoolTimeLimit: "04:00:00", PoolScript: "/bin/false", RunnerScript: "/bin/true", RunnerArchive: "/tmp/archive"}
+	cfg := config{StateDir: filepath.Join(tmp, "state"), ScaleSetName: "c2ln1-org-c2ln1", Partition: "p1shr", CPUs: 4, Memory: "8G", PoolTimeLimit: "3-00:00:00", PoolScript: "/bin/false", RunnerScript: "/bin/true", RunnerArchive: "/tmp/archive"}
 	p := &poolSlurm{cfg: cfg, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	ctx := context.Background()
 	if err := p.Ensure(ctx); err != nil {
@@ -78,7 +78,7 @@ func TestPoolReusesOneSlurmAllocationForMultipleRunners(t *testing.T) {
 }
 
 func TestPoolEnforcesAuthorizedCapacity(t *testing.T) {
-	cfg := config{RegistrationURL: "https://github.com/test", ScaleSetName: "pool", MaxRunners: 1, Partition: "p1shr", CPUs: 4, Memory: "8G", TimeLimit: "00:30:00", RunnerScript: "runner", PoolScript: "pool", PoolTimeLimit: "04:00:00", RunnerArchive: "runner.tar.gz", PoolMode: true}
+	cfg := config{RegistrationURL: "https://github.com/test", ScaleSetName: "pool", MaxRunners: 1, Partition: "p1shr", CPUs: 4, Memory: "8G", TimeLimit: "00:30:00", RunnerScript: "runner", PoolScript: "pool", PoolTimeLimit: "3-00:00:00", RunnerArchive: "runner.tar.gz", PoolMode: true}
 	if err := cfg.validate(); err != nil {
 		t.Fatal(err)
 	}

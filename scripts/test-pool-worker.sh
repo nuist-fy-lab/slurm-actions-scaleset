@@ -16,7 +16,7 @@ mkdir -p "$tmp/bin" "$tmp/pool/requests" "$tmp/state/jit"
 printf 'archive' >"$tmp/runner.tar.gz"
 cat >"$tmp/bin/squeue" <<'SCRIPT'
 #!/bin/sh
-echo '3:00:00'
+echo '2-23:59:55'
 SCRIPT
 cat >"$tmp/bin/runner" <<'SCRIPT'
 #!/bin/sh

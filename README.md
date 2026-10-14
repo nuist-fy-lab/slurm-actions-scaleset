@@ -23,8 +23,8 @@ on a Slurm compute node and consumes one job only.
 For frequent short CI jobs, set `POOL_MODE='true'` in the organization
 controller configuration, install `scripts/pool-worker.sh`, and set
 `POOL_SCRIPT` to its absolute path. Keep `MAX_RUNNERS=1`, `PARTITION=p1shr`,
-`CPUS=4`, and `MEMORY=8G`. `POOL_TIME_LIMIT='04:00:00'` reserves one 4C8G
-allocation for four hours at a time. Only enable this where persistent idle
+`CPUS=4`, and `MEMORY=8G`. `POOL_TIME_LIMIT='3-00:00:00'` reserves one 4C8G
+allocation for 72 hours at a time. Only enable this where persistent idle
 allocations are permitted by the HPC center's rules.
 
 The login-node controller proactively requests exactly one Slurm pool job.

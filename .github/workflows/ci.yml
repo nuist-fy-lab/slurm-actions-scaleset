@@ -9,17 +9,15 @@ permissions:
 
 jobs:
   test-build:
-    # Only organization repository pushes can run on c2ln1. In particular,
-    # never enable pull_request or pull_request_target on this public repo:
-    # fork authors could otherwise alter the workflow before CI runs.
-    runs-on: [self-hosted, c2ln1-org]
+    # Public repository: run trusted org-repository pushes on GitHub-hosted CI.
+    # Do not enable PR events; untrusted forks must not trigger this workflow.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25.x'
-          # Slurm nodes already use a shared module cache. Uploading it as
-          # an Actions cache during post-job cleanup can stall for minutes.
+          # Keep builds self-contained and avoid uploading any shared cache.
           cache: false
       - name: Tidy
         run: go mod tidy
@@ -28,8 +26,7 @@ jobs:
       - name: Check scripts
         run: |
           bash -n scripts/*.sh
-          # Compute runners share $HOME with the production controller.
-          # NEVER install or overwrite anything in $HOME during CI.
+          # Validate service files on the isolated GitHub-hosted runner.
           systemd-analyze verify systemd/*.service systemd/*.timer
       - name: Test
         run: go test ./...

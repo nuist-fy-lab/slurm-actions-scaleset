@@ -18,10 +18,10 @@ Default c2ln1 policy:
 The controller is intended to run on the c2ln1 login node. Each runner executes
 on a Slurm compute node and consumes one job only.
 
-Repository CI uses the c2ln1 organization Slurm runner only for pushes to
-branches in the organization-owned repository. Write collaborators must be
-organization members. Pull requests, including external forks, do not trigger
-CI: untrusted fork code must never execute on the shared c2ln1 cluster.
+Repository CI runs on GitHub-hosted Ubuntu workers only for pushes to branches
+in the organization-owned repository. Write collaborators must be organization
+members. Pull requests, including external forks, do not trigger CI. The
+c2ln1 cluster is only a deployment target for this repository, not a CI runner.
 
 Runtime values are separated from scripts:
 

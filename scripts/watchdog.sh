@@ -26,6 +26,9 @@ log="$state/watchdog.log"
 max_runners="$MAX_RUNNERS"
 heartbeat_max_age="$WATCHDOG_HEARTBEAT_MAX_AGE"
 job_prefix="$SLURM_JOB_PREFIX"
+if [[ "${POOL_MODE:-false}" == 'true' ]]; then
+  job_prefix="ghpool-${SLURM_JOB_PREFIX%-}"
+fi
 mkdir -p "$state"
 exec >>"$log" 2>&1
 

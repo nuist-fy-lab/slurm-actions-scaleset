@@ -6,7 +6,7 @@ GitHub owns queueing, long polling, acknowledgements, JIT runner configuration,
 and scale-set capacity. This project only translates desired runner capacity
 into ephemeral Slurm jobs.
 
-Default c2ln1 policy:
+Default c2ln1 policy (one-shot mode):
 
 - partition: `p1shr`
 - CPU per runner: `4`
@@ -17,6 +17,35 @@ Default c2ln1 policy:
 
 The controller is intended to run on the c2ln1 login node. Each runner executes
 on a Slurm compute node and consumes one job only.
+
+## Persistent Slurm allocation (opt-in)
+
+For frequent short CI jobs, set `POOL_MODE='true'` in the organization
+controller configuration, install `scripts/pool-worker.sh`, and set
+`POOL_SCRIPT` to its absolute path. Keep `MAX_RUNNERS=1`, `PARTITION=p1shr`,
+`CPUS=4`, and `MEMORY=8G`. `POOL_TIME_LIMIT='04:00:00'` reserves one 4C8G
+allocation for four hours at a time. Only enable this where persistent idle
+allocations are permitted by the HPC center's rules.
+
+The login-node controller proactively requests exactly one Slurm pool job.
+When admitted, the compute-node pool processes `.req` markers from a private
+directory in shared storage and starts a fresh one-job GitHub JIT runner for
+each request. After the runner and its cleanup exit, the shared allocation
+remains alive for the next request. The pool automatically resubmits after
+its Slurm time limit, but reacquisition may queue; this is not an uninterrupted
+reservation. A CI run in flight when the wall-time expires can be terminated,
+so production rollout must account for the pool wall-time and job duration.
+
+Stop the controller before changing modes. Do not enable the pool while an
+old one-shot CI Slurm allocation remains active: drain or explicitly handle
+that allocation first to avoid running both kinds of jobs. Keep the old
+binary and configuration for immediate rollback. Disabling pool mode does
+not cancel an already-running pool allocation; explicitly drain and cancel
+the pool job using the recorded Slurm ID if rolling back.
+
+The pool worker runs only under Slurm (`SLURM_JOB_ID` must be set). It does
+not run CI test/build steps on c2ln1. The pool request directory is mode
+0700; per-job GitHub JIT credentials remain in the existing mode-0600 files.
 
 Repository CI runs on GitHub-hosted Ubuntu workers only for pushes to branches
 in the organization-owned repository. Write collaborators must be organization

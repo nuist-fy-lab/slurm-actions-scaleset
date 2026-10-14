@@ -11,6 +11,7 @@ import (
 )
 
 type config struct {
+	// Runtime configuration for the Slurm adapter.
 	RegistrationURL string
 	ScaleSetName    string
 	Labels          stringList
@@ -28,6 +29,9 @@ type config struct {
 	LogFormat       string
 	LogLevel        string
 	StartupTimeout  time.Duration
+	PoolMode        bool
+	PoolScript      string
+	PoolTimeLimit   string
 }
 
 type stringList []string
@@ -63,6 +67,9 @@ func parseConfig() (config, error) {
 	flag.StringVar(&cfg.LogFormat, "log-format", "json", "log format: json or text")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "log level: debug, info, warn, error")
 	flag.DurationVar(&cfg.StartupTimeout, "startup-timeout", 3*time.Minute, "maximum time for a submitted runner to remain pending before reconciliation")
+	flag.BoolVar(&cfg.PoolMode, "pool-mode", false, "reuse one Slurm allocation for serial runners")
+	flag.StringVar(&cfg.PoolScript, "pool-script", "", "compute-node pool supervisor")
+	flag.StringVar(&cfg.PoolTimeLimit, "pool-time-limit", "04:00:00", "pool allocation wall-time")
 	flag.Parse()
 
 	home, err := os.UserHomeDir()
@@ -80,6 +87,9 @@ func parseConfig() (config, error) {
 	}
 	if cfg.HeartbeatFile == "" {
 		cfg.HeartbeatFile = cfg.StateDir + "/heartbeat"
+	}
+	if cfg.PoolScript == "" {
+		cfg.PoolScript = home + "/.local/lib/slurm-actions-scaleset/pool-worker.sh"
 	}
 	if len(cfg.Labels) == 0 {
 		cfg.Labels = stringList{"self-hosted", "linux", "x64", cfg.ScaleSetName}
@@ -111,6 +121,14 @@ func (c config) validate() error {
 		return errors.New("--runner-archive is required")
 	case c.RunnerScript == "":
 		return errors.New("--runner-script is required")
+	case c.PoolMode && c.MaxRunners != 1:
+		return errors.New("pool requires max-runners=1")
+	case c.PoolMode && c.Partition != "p1shr":
+		return errors.New("pool requires authorized p1shr partition")
+	case c.PoolMode && (c.CPUs != 4 || c.Memory != "8G"):
+		return errors.New("pool requires 4 CPUs and 8G memory")
+	case c.PoolMode && c.PoolTimeLimit == "":
+		return errors.New("pool requires a walltime")
 	}
 	return nil
 }

@@ -20,6 +20,13 @@ fi
 : "${STATE_DIR:?STATE_DIR is required}"
 : "${HEARTBEAT_FILE:?HEARTBEAT_FILE is required}"
 
+pool_args=()
+if [[ "${POOL_MODE:-false}" == 'true' ]]; then
+  : "${POOL_SCRIPT:?POOL_SCRIPT is required}"
+  : "${POOL_TIME_LIMIT:?POOL_TIME_LIMIT is required}"
+  pool_args=(--pool-mode --pool-script "$POOL_SCRIPT" --pool-time-limit "$POOL_TIME_LIMIT")
+fi
+
 exec "$HOME/.local/bin/slurm-actions-scaleset" \
   --url "$REGISTRATION_URL" \
   --name "$SCALE_SET_NAME" \
@@ -32,4 +39,5 @@ exec "$HOME/.local/bin/slurm-actions-scaleset" \
   --heartbeat-file "$HEARTBEAT_FILE" \
   --runner-archive "$RUNNER_ARCHIVE" \
   --runner-script "$RUNNER_SCRIPT" \
+  "${pool_args[@]}" \
   --log-format "${LOG_FORMAT:-json}"

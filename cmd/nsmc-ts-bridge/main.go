@@ -30,6 +30,8 @@ func main() {
 	localBase := flag.Int("local-base", 12880, "client starting SOCKS5 port")
 	remote := flag.String("remote", "100.103.104.103:2252", "NanoPi Tailscale destination")
 	wanPeersFile := flag.String("wan-peers-file", "", "optional six-line WAN-to-Tailscale-peer file; read on each new connection")
+	statsFile := flag.String("stats-file", "", "optional owner-only JSON file recording per-WAN transport telemetry")
+	adaptive := flag.Bool("adaptive", false, "adaptively distribute channel 0 traffic based on measured WAN throughput and failures")
 	tailscale := flag.String("tailscale", "", "path to existing tailscale CLI")
 	listen := flag.String("listen", "100.103.104.103:2252", "NanoPi listening address")
 	allowFrom := flag.String("allow-from", "100.97.137.1", "allowed Tailscale client IP")
@@ -46,7 +48,7 @@ func main() {
 		if net.ParseIP(*localIP) == nil || !net.ParseIP(*localIP).IsLoopback() {
 			log.Fatal("client must listen on a loopback IP")
 		}
-		err = runClient(*localIP, *localBase, *remote, *tailscale, *wanPeersFile)
+		err = runClient(*localIP, *localBase, *remote, *tailscale, *wanPeersFile, *statsFile, *adaptive)
 	case "server":
 		if net.ParseIP(*allowFrom) == nil {
 			log.Fatal("invalid allow-from IP")
@@ -182,24 +184,46 @@ func netipInTailnet(ip net.IP) bool {
 	return v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 }
 
-func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile string) {
+func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile string, telemetry *wanTelemetry, adaptive bool) {
 	defer client.Close()
-	chosen, prefix := chooseRoute(channel, remote, peersFile, balancedPeerIndex.Add(1)-1)
+	seq := balancedPeerIndex.Add(1) - 1
+	chosen, prefix := chooseRoute(channel, remote, peersFile, seq)
+	if channel == 0 && adaptive && telemetry != nil {
+		chosen, prefix = telemetry.pickRoute(remote, peersFile, seq)
+	}
+	wan := resolveWAN(channel, chosen, prefix, remote, peersFile)
+	if telemetry != nil && wan >= 1 && wan <= 6 {
+		telemetry.begin(wan)
+		defer telemetry.end(wan)
+	}
 	host, port, err := net.SplitHostPort(chosen)
 	if err != nil {
+		if telemetry != nil {
+			telemetry.failed(wan)
+		}
 		return
 	}
 	cmd := exec.Command(tailscale, "nc", host, port)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		if telemetry != nil {
+			telemetry.failed(wan)
+		}
 		return
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		if telemetry != nil {
+			telemetry.failed(wan)
+		}
 		return
 	}
 	cmd.Stderr = io.Discard
+	started := time.Now()
 	if err := cmd.Start(); err != nil {
+		if telemetry != nil {
+			telemetry.failed(wan)
+		}
 		return
 	}
 	defer func() {
@@ -208,17 +232,28 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile 
 	}()
 	if len(prefix) != 0 {
 		if _, err := stdin.Write(prefix); err != nil {
+			if telemetry != nil {
+				telemetry.failed(wan)
+			}
 			_ = stdin.Close()
 			return
 		}
 	}
 	done := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(stdin, client)
+		_, _ = io.Copy(&wanByteWriter{Writer: stdin, telemetry: telemetry, wan: wan, inbound: false}, client)
 		_ = stdin.Close()
 		close(done)
 	}()
-	_, _ = io.Copy(client, stdout)
+	reply := &wanByteWriter{Writer: client, telemetry: telemetry, wan: wan, inbound: true, started: started}
+	bytes, _ := io.Copy(reply, stdout)
+	if telemetry != nil {
+		if bytes > 0 {
+			telemetry.succeeded(wan, reply.firstDelay)
+		} else {
+			telemetry.failed(wan)
+		}
+	}
 	_ = client.Close()
 	select {
 	case <-done:
@@ -226,7 +261,7 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile 
 	}
 }
 
-func runClient(ip string, base int, remote, tailscale, peersFile string) error {
+func runClient(ip string, base int, remote, tailscale, peersFile, statsFile string, adaptive bool) error {
 	if _, _, err := net.SplitHostPort(remote); err != nil {
 		return err
 	}
@@ -237,6 +272,11 @@ func runClient(ip string, base int, remote, tailscale, peersFile string) error {
 		}
 	}()
 	sem := make(chan struct{}, 48)
+	var telemetry *wanTelemetry
+	if statsFile != "" {
+		telemetry = newWANTelemetry()
+		go telemetry.publish(statsFile, peersFile, remote)
+	}
 	for i := 0; i < channels; i++ {
 		ln, err := net.Listen("tcp", net.JoinHostPort(ip, strconv.Itoa(base+i)))
 		if err != nil {
@@ -251,7 +291,10 @@ func runClient(ip string, base int, remote, tailscale, peersFile string) error {
 				}
 				select {
 				case sem <- struct{}{}:
-					go func() { defer func() { <-sem }(); serveClientConn(c, index, remote, tailscale, peersFile) }()
+					go func() {
+						defer func() { <-sem }()
+						serveClientConn(c, index, remote, tailscale, peersFile, telemetry, adaptive)
+					}()
 				default:
 					_ = c.Close()
 				}

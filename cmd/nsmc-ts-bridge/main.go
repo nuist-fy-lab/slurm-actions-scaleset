@@ -40,6 +40,10 @@ func main() {
 	tailscale := flag.String("tailscale", "", "path to existing tailscale CLI")
 	transport := flag.String("transport", "nc", "Tailnet dial method: nc or localapi (client only)")
 	tailscaleSocket := flag.String("tailscale-socket", "", "tailscaled LocalAPI Unix socket (required for localapi)")
+	clientSessions := flag.Int("client-sessions", maxClientSessions, "maximum active SOCKS bridge sessions (32..256)")
+	clientReserved := flag.Int("client-reserved", maxClientSessions-maxOrdinarySessions, "active session slots reserved for portal channel 2 (8..64)")
+	clientWaiters := flag.Int("client-waiters", maxClientWaiters, "maximum queued sessions (16..128)")
+	clientAdmissionTimeout := flag.Duration("client-admission-timeout", admissionWait, "maximum time queued before admission (5s..30s)")
 	listen := flag.String("listen", "100.103.104.103:2252", "NanoPi listening address")
 	allowFrom := flag.String("allow-from", "100.97.137.1", "allowed Tailscale client IP")
 	gostHost := flag.String("gost-host", "127.0.0.1", "NanoPi GOST loopback address")
@@ -62,7 +66,11 @@ func main() {
 		if net.ParseIP(*localIP) == nil || !net.ParseIP(*localIP).IsLoopback() {
 			log.Fatal("client must listen on a loopback IP")
 		}
-		err = runClient(*localIP, *localBase, *remote, *tailscale, *wanPeersFile, *statsFile, *adaptive, *transport, *tailscaleSocket)
+		capacity := clientAdmissionConfig{sessions: *clientSessions, reserved: *clientReserved, waiters: *clientWaiters, timeout: *clientAdmissionTimeout}
+		if err := capacity.validate(); err != nil {
+			log.Fatal(err)
+		}
+		err = runClient(*localIP, *localBase, *remote, *tailscale, *wanPeersFile, *statsFile, *adaptive, *transport, *tailscaleSocket, capacity)
 	case "server":
 		if net.ParseIP(*allowFrom) == nil {
 			log.Fatal("invalid allow-from IP")
@@ -391,7 +399,7 @@ func truncateDiagnostic(s string) string {
 	return s
 }
 
-func runClient(ip string, base int, remote, tailscale, peersFile, statsFile string, adaptive bool, transport, socket string) error {
+func runClient(ip string, base int, remote, tailscale, peersFile, statsFile string, adaptive bool, transport, socket string, capacity clientAdmissionConfig) error {
 	if _, _, err := net.SplitHostPort(remote); err != nil {
 		return err
 	}
@@ -401,7 +409,7 @@ func runClient(ip string, base int, remote, tailscale, peersFile, statsFile stri
 			_ = l.Close()
 		}
 	}()
-	gate := newBridgeAdmission(maxClientSessions, maxOrdinarySessions, maxClientWaiters, admissionWait)
+	gate := newBridgeAdmission(capacity.sessions, capacity.sessions-capacity.reserved, capacity.waiters, capacity.timeout)
 	var lc *local.Client
 	if transport == "localapi" {
 		// Never fall back to a machine-wide or GUI Tailscale socket.
@@ -440,7 +448,7 @@ func runClient(ip string, base int, remote, tailscale, peersFile, statsFile stri
 			}
 		}(i, ln)
 	}
-	log.Printf("c2ln1 Go bridge %s ports %d..%d via Tailscale %s to %s", ip, base, base+6, transport, remote)
+	log.Printf("c2ln1 Go bridge %s ports %d..%d via Tailscale %s to %s: sessions=%d reserved=%d waiters=%d wait=%v", ip, base, base+6, transport, remote, capacity.sessions, capacity.reserved, capacity.waiters, capacity.timeout)
 	// Server mode uses the accept loop; client mode remains alive indefinitely.
 	if strings.TrimSpace(remote) == "" {
 		return fmt.Errorf("empty NanoPi destination")

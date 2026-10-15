@@ -1,10 +1,36 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"sync/atomic"
 	"time"
 )
+
+// Keep conservative defaults for older installations and allow bounded,
+// explicitly opted-in capacity probes without changing download A/C policy.
+type clientAdmissionConfig struct {
+	sessions int
+	reserved int
+	waiters  int
+	timeout  time.Duration
+}
+
+func (c clientAdmissionConfig) validate() error {
+	if c.sessions < 32 || c.sessions > 256 {
+		return fmt.Errorf("client-sessions must be between 32 and 256")
+	}
+	if c.reserved < 8 || c.reserved > 64 || c.reserved >= c.sessions {
+		return fmt.Errorf("client-reserved must be between 8 and 64 and less than client-sessions")
+	}
+	if c.waiters < 16 || c.waiters > 128 {
+		return fmt.Errorf("client-waiters must be between 16 and 128")
+	}
+	if c.timeout < 5*time.Second || c.timeout > 30*time.Second {
+		return fmt.Errorf("client-admission-timeout must be between 5s and 30s")
+	}
+	return nil
+}
 
 const (
 	// FTP control/data sessions, HTTPS downloads and probes can overlap.

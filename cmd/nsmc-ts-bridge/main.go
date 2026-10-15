@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"tailscale.com/client/local"
 )
 
 const channels = 7
@@ -35,6 +38,8 @@ func main() {
 	statsFile := flag.String("stats-file", "", "optional owner-only JSON file recording per-WAN transport telemetry")
 	adaptive := flag.Bool("adaptive", false, "adaptively distribute channel 0 traffic based on measured WAN throughput and failures")
 	tailscale := flag.String("tailscale", "", "path to existing tailscale CLI")
+	transport := flag.String("transport", "nc", "Tailnet dial method: nc or localapi (client only)")
+	tailscaleSocket := flag.String("tailscale-socket", "", "tailscaled LocalAPI Unix socket (required for localapi)")
 	listen := flag.String("listen", "100.103.104.103:2252", "NanoPi listening address")
 	allowFrom := flag.String("allow-from", "100.97.137.1", "allowed Tailscale client IP")
 	gostHost := flag.String("gost-host", "127.0.0.1", "NanoPi GOST loopback address")
@@ -45,13 +50,19 @@ func main() {
 	var err error
 	switch *mode {
 	case "client":
-		if *tailscale == "" {
-			log.Fatal("--tailscale is required on c2ln1")
+		if *transport != "nc" && *transport != "localapi" {
+			log.Fatal("--transport must be nc or localapi")
+		}
+		if *transport == "nc" && *tailscale == "" {
+			log.Fatal("--tailscale is required for nc transport")
+		}
+		if *transport == "localapi" && *tailscaleSocket == "" {
+			log.Fatal("--tailscale-socket is required for localapi transport")
 		}
 		if net.ParseIP(*localIP) == nil || !net.ParseIP(*localIP).IsLoopback() {
 			log.Fatal("client must listen on a loopback IP")
 		}
-		err = runClient(*localIP, *localBase, *remote, *tailscale, *wanPeersFile, *statsFile, *adaptive)
+		err = runClient(*localIP, *localBase, *remote, *tailscale, *wanPeersFile, *statsFile, *adaptive, *transport, *tailscaleSocket)
 	case "server":
 		if net.ParseIP(*allowFrom) == nil {
 			log.Fatal("invalid allow-from IP")
@@ -224,7 +235,7 @@ func netipInTailnet(ip net.IP) bool {
 	return v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 }
 
-func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile string, telemetry *wanTelemetry, adaptive bool) {
+func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile string, telemetry *wanTelemetry, adaptive bool, transport string, lc *local.Client) {
 	defer client.Close()
 	seq := balancedPeerIndex.Add(1) - 1
 	chosen, prefix := chooseRoute(channel, remote, peersFile, seq)
@@ -241,6 +252,10 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile 
 		if telemetry != nil {
 			telemetry.failed(wan)
 		}
+		return
+	}
+	if transport == "localapi" {
+		serveLocalAPIConn(client, lc.DialTCP, host, port, prefix, telemetry, wan)
 		return
 	}
 	cmd := exec.Command(tailscale, "nc", host, port)
@@ -310,6 +325,64 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile 
 	}
 }
 
+// serveLocalAPIConn preserves the existing SOCKS byte stream, WAN accounting
+// and W-prefix protocol without launching a separate tailscale nc process for
+// every TCP connection. DialTCP is the stable Tailscale LocalAPI and uses the
+// already authenticated userspace daemon and its existing WireGuard identity.
+type tailnetDialer func(context.Context, string, uint16) (net.Conn, error)
+
+func serveLocalAPIConn(client net.Conn, dial tailnetDialer, host, port string, prefix []byte, telemetry *wanTelemetry, wan int) {
+	portNum, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || portNum == 0 {
+		if telemetry != nil {
+			telemetry.failed(wan)
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	started := time.Now()
+	upstream, err := dial(ctx, host, uint16(portNum))
+	if err != nil {
+		if telemetry != nil {
+			telemetry.failed(wan)
+		}
+		log.Printf("LocalAPI DialTCP WAN %d failed: %v", wan, err)
+		return
+	}
+	defer upstream.Close()
+	if len(prefix) != 0 {
+		if _, err := upstream.Write(prefix); err != nil {
+			if telemetry != nil {
+				telemetry.failed(wan)
+			}
+			return
+		}
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&wanByteWriter{Writer: upstream, telemetry: telemetry, wan: wan, inbound: false}, client)
+		if half, ok := upstream.(interface{ CloseWrite() error }); ok {
+			_ = half.CloseWrite()
+		}
+		close(done)
+	}()
+	reply := &wanByteWriter{Writer: client, telemetry: telemetry, wan: wan, inbound: true, started: started}
+	n, _ := io.Copy(reply, upstream)
+	if telemetry != nil {
+		if n > 0 {
+			telemetry.succeeded(wan, reply.firstDelay)
+		} else {
+			telemetry.failed(wan)
+		}
+	}
+	_ = client.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+	}
+}
+
 func truncateDiagnostic(s string) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
 	if len(s) > 256 {
@@ -318,7 +391,7 @@ func truncateDiagnostic(s string) string {
 	return s
 }
 
-func runClient(ip string, base int, remote, tailscale, peersFile, statsFile string, adaptive bool) error {
+func runClient(ip string, base int, remote, tailscale, peersFile, statsFile string, adaptive bool, transport, socket string) error {
 	if _, _, err := net.SplitHostPort(remote); err != nil {
 		return err
 	}
@@ -329,6 +402,11 @@ func runClient(ip string, base int, remote, tailscale, peersFile, statsFile stri
 		}
 	}()
 	gate := newBridgeAdmission(maxClientSessions, maxOrdinarySessions, maxClientWaiters, admissionWait)
+	var lc *local.Client
+	if transport == "localapi" {
+		// Never fall back to a machine-wide or GUI Tailscale socket.
+		lc = &local.Client{Socket: socket, UseSocketOnly: true}
+	}
 	var telemetry *wanTelemetry
 	if statsFile != "" {
 		telemetry = newWANTelemetry()
@@ -357,12 +435,12 @@ func runClient(ip string, base int, remote, tailscale, peersFile, statsFile stri
 						return
 					}
 					defer release()
-					serveClientConn(c, index, remote, tailscale, peersFile, telemetry, adaptive)
+					serveClientConn(c, index, remote, tailscale, peersFile, telemetry, adaptive, transport, lc)
 				}()
 			}
 		}(i, ln)
 	}
-	log.Printf("c2ln1 Go bridge %s ports %d..%d via Tailscale to %s", ip, base, base+6, remote)
+	log.Printf("c2ln1 Go bridge %s ports %d..%d via Tailscale %s to %s", ip, base, base+6, transport, remote)
 	// Server mode uses the accept loop; client mode remains alive indefinitely.
 	if strings.TrimSpace(remote) == "" {
 		return fmt.Errorf("empty NanoPi destination")

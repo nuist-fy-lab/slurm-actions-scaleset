@@ -6,10 +6,54 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestBridgeTCPNotSentLowatIsPerConnection(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("TCP_NOTSENT_LOWAT is Linux-specific")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	client, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	accepted, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accepted.Close()
+	const lowat = 64 * 1024
+	if err := tuneBridgeSendQueue(accepted, lowat); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := accepted.(*net.TCPConn).SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actual int
+	var readErr error
+	if err := raw.Control(func(fd uintptr) {
+		actual, readErr = syscall.GetsockoptInt(int(fd), syscall.IPPROTO_TCP, tcpNotSentLowatOption)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if actual != lowat {
+		t.Fatalf("TCP_NOTSENT_LOWAT = %d, want %d", actual, lowat)
+	}
+}
 
 func TestOptionalWANPeersAndFallback(t *testing.T) {
 	const main = "100.103.104.103:2252"
@@ -86,7 +130,7 @@ func TestServerDemultiplexesToPrivateGOST(t *testing.T) {
 		defer close(done)
 		c, err := frontend.Accept()
 		if err == nil {
-			serveServerConn(c, "127.0.0.1", "127.0.0.1", base)
+			serveServerConn(c, "127.0.0.1", "127.0.0.1", base, 0)
 		}
 	}()
 	conn, err := net.Dial("tcp", frontend.Addr().String())

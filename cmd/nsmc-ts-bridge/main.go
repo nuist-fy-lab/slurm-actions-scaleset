@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -38,6 +39,7 @@ func main() {
 	allowFrom := flag.String("allow-from", "100.97.137.1", "allowed Tailscale client IP")
 	gostHost := flag.String("gost-host", "127.0.0.1", "NanoPi GOST loopback address")
 	gostBase := flag.Int("gost-base", 11880, "NanoPi GOST starting SOCKS5 port")
+	tcpNotSentLowat := flag.Int("tcp-notsent-lowat", 0, "optional NanoPi bridge TCP_NOTSENT_LOWAT bytes (0 disables pacing; Linux only)")
 	flag.Parse()
 
 	var err error
@@ -54,7 +56,10 @@ func main() {
 		if net.ParseIP(*allowFrom) == nil {
 			log.Fatal("invalid allow-from IP")
 		}
-		err = runServer(*listen, *allowFrom, *gostHost, *gostBase)
+		if *tcpNotSentLowat < 0 || *tcpNotSentLowat > 1024*1024 {
+			log.Fatal("--tcp-notsent-lowat must be between 0 and 1048576")
+		}
+		err = runServer(*listen, *allowFrom, *gostHost, *gostBase, *tcpNotSentLowat)
 	default:
 		log.Fatal("use --mode=client or --mode=server")
 	}
@@ -90,7 +95,34 @@ func copyBoth(client, upstream net.Conn) {
 	wg.Wait()
 }
 
-func serveServerConn(client net.Conn, allowIP, gostHost string, gostBase int) {
+// TCP_NOTSENT_LOWAT controls how far a kernel TCP writer can enqueue unsent
+// bytes before it waits for progress. It does not set a throughput ceiling
+// and does not alter Tailscale, WAN routing or GOST configuration.
+// Linux TCP_NOTSENT_LOWAT is socket option 25 at IPPROTO_TCP.
+const tcpNotSentLowatOption = 25
+
+func tuneBridgeSendQueue(conn net.Conn, lowat int) error {
+	if lowat == 0 {
+		return nil
+	}
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		return errors.New("bridge client is not TCP")
+	}
+	raw, err := tcp.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var sockErr error
+	if err := raw.Control(func(fd uintptr) {
+		sockErr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, tcpNotSentLowatOption, lowat)
+	}); err != nil {
+		return err
+	}
+	return sockErr
+}
+
+func serveServerConn(client net.Conn, allowIP, gostHost string, gostBase, tcpNotSentLowat int) {
 	defer client.Close()
 	host, _, err := net.SplitHostPort(client.RemoteAddr().String())
 	if err != nil || !net.ParseIP(host).Equal(net.ParseIP(allowIP)) {
@@ -113,16 +145,20 @@ func serveServerConn(client net.Conn, allowIP, gostHost string, gostBase int) {
 	}
 	defer upstream.Close()
 	_ = client.SetReadDeadline(time.Time{})
+	if err := tuneBridgeSendQueue(client, tcpNotSentLowat); err != nil {
+		// Keep the connection alive if the kernel lacks this optional feature.
+		log.Printf("bridge TCP pacing unavailable: %v", err)
+	}
 	copyBoth(client, upstream)
 }
 
-func runServer(listen, allowed, gostHost string, gostBase int) error {
+func runServer(listen, allowed, gostHost string, gostBase, tcpNotSentLowat int) error {
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		return err
 	}
 	defer ln.Close()
-	log.Printf("NanoPi Go bridge %s => GOST %s:%d..%d", listen, gostHost, gostBase, gostBase+6)
+	log.Printf("NanoPi Go bridge %s => GOST %s:%d..%d TCP_NOTSENT_LOWAT=%d", listen, gostHost, gostBase, gostBase+6, tcpNotSentLowat)
 	gate := newBridgeAdmission(maxServerSessions, 0, maxServerWaiters, admissionWait)
 	for {
 		c, err := ln.Accept()
@@ -136,7 +172,7 @@ func runServer(listen, allowed, gostHost string, gostBase int) error {
 				return
 			}
 			defer release()
-			serveServerConn(c, allowed, gostHost, gostBase)
+			serveServerConn(c, allowed, gostHost, gostBase, tcpNotSentLowat)
 		}()
 	}
 }

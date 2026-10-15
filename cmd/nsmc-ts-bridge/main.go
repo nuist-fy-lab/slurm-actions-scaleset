@@ -11,20 +11,25 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const channels = 7
+
+var balancedPeerIndex atomic.Uint64
 
 func main() {
 	mode := flag.String("mode", "", "client on c2ln1 or server on NanoPi")
 	localIP := flag.String("local-ip", "127.0.0.1", "client listening address")
 	localBase := flag.Int("local-base", 12880, "client starting SOCKS5 port")
 	remote := flag.String("remote", "100.103.104.103:2252", "NanoPi Tailscale destination")
+	wanPeersFile := flag.String("wan-peers-file", "", "optional six-line WAN-to-Tailscale-peer file; read on each new connection")
 	tailscale := flag.String("tailscale", "", "path to existing tailscale CLI")
 	listen := flag.String("listen", "100.103.104.103:2252", "NanoPi listening address")
 	allowFrom := flag.String("allow-from", "100.97.137.1", "allowed Tailscale client IP")
@@ -41,7 +46,7 @@ func main() {
 		if net.ParseIP(*localIP) == nil || !net.ParseIP(*localIP).IsLoopback() {
 			log.Fatal("client must listen on a loopback IP")
 		}
-		err = runClient(*localIP, *localBase, *remote, *tailscale)
+		err = runClient(*localIP, *localBase, *remote, *tailscale, *wanPeersFile)
 	case "server":
 		if net.ParseIP(*allowFrom) == nil {
 			log.Fatal("invalid allow-from IP")
@@ -130,9 +135,57 @@ func runServer(listen, allowed, gostHost string, gostBase int) error {
 	}
 }
 
-func serveClientConn(client net.Conn, channel int, remote, tailscale string) {
+// Peer 1 is the existing NanoPi Tailscale node and expects the W-prefix.
+// Peer 2..6 are separate userspace Tailscale identities whose TCP Serve
+// endpoints forward directly to their corresponding GOST SOCKS5 listener.
+// The optional file is re-read on EVERY new TCP session. A missing or
+// malformed file safely restores original single-path forwarding.
+func chooseRoute(channel int, remote, peersFile string, rr uint64) (string, []byte) {
+	fallback := func(index int) (string, []byte) {
+		return remote, []byte{'W', byte('0' + index)}
+	}
+	if peersFile == "" {
+		return fallback(channel)
+	}
+	data, err := os.ReadFile(peersFile)
+	if err != nil {
+		return fallback(channel)
+	}
+	entries := strings.Fields(string(data))
+	if len(entries) != 6 || entries[0] != remote {
+		return fallback(channel)
+	}
+	active := []int{1}
+	for i := 1; i < 6; i++ {
+		if entries[i] == "-" {
+			continue
+		}
+		host, port, err := net.SplitHostPort(entries[i])
+		ip := net.ParseIP(host)
+		if err != nil || port != "2252" || ip == nil || ip.To4() == nil || !netipInTailnet(ip) {
+			return fallback(channel)
+		}
+		active = append(active, i+1)
+	}
+	wan := channel
+	if wan == 0 {
+		wan = active[rr%uint64(len(active))]
+	}
+	if wan == 1 || entries[wan-1] == "-" {
+		return fallback(wan)
+	}
+	return entries[wan-1], nil
+}
+
+func netipInTailnet(ip net.IP) bool {
+	v4 := ip.To4()
+	return v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
+}
+
+func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile string) {
 	defer client.Close()
-	host, port, err := net.SplitHostPort(remote)
+	chosen, prefix := chooseRoute(channel, remote, peersFile, balancedPeerIndex.Add(1)-1)
+	host, port, err := net.SplitHostPort(chosen)
 	if err != nil {
 		return
 	}
@@ -153,9 +206,11 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale string) {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	}()
-	if _, err := stdin.Write([]byte{'W', byte('0' + channel)}); err != nil {
-		_ = stdin.Close()
-		return
+	if len(prefix) != 0 {
+		if _, err := stdin.Write(prefix); err != nil {
+			_ = stdin.Close()
+			return
+		}
 	}
 	done := make(chan struct{})
 	go func() {
@@ -171,7 +226,7 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale string) {
 	}
 }
 
-func runClient(ip string, base int, remote, tailscale string) error {
+func runClient(ip string, base int, remote, tailscale, peersFile string) error {
 	if _, _, err := net.SplitHostPort(remote); err != nil {
 		return err
 	}
@@ -196,7 +251,7 @@ func runClient(ip string, base int, remote, tailscale string) error {
 				}
 				select {
 				case sem <- struct{}{}:
-					go func() { defer func() { <-sem }(); serveClientConn(c, index, remote, tailscale) }()
+					go func() { defer func() { <-sem }(); serveClientConn(c, index, remote, tailscale, peersFile) }()
 				default:
 					_ = c.Close()
 				}

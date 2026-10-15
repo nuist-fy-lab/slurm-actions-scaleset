@@ -3,10 +3,44 @@ package main
 import (
 	"io"
 	"net"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
 )
+
+func TestOptionalWANPeersAndFallback(t *testing.T) {
+	const main = "100.103.104.103:2252"
+	filename := filepath.Join(t.TempDir(), "wan-peers.conf")
+	check := func(channel int, selector uint64, wantAddr string, wantPrefix []byte) {
+		t.Helper()
+		addr, prefix := chooseRoute(channel, main, filename, selector)
+		if addr != wantAddr || !reflect.DeepEqual(prefix, wantPrefix) {
+			t.Fatalf("channel=%d selector=%d: addr=%q prefix=%q expected=%q %q", channel, selector, addr, prefix, wantAddr, wantPrefix)
+		}
+	}
+	check(0, 0, main, []byte("W0")) // absent file preserves production behavior
+	config := main + "\n100.76.5.2:2252\n-\n-\n-\n-\n"
+	if err := os.WriteFile(filename, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check(0, 0, main, []byte("W1"))
+	check(0, 1, "100.76.5.2:2252", nil)
+	check(0, 2, main, []byte("W1"))
+	check(1, 0, main, []byte("W1"))
+	check(2, 0, "100.76.5.2:2252", nil)
+	check(3, 0, main, []byte("W3"))
+	if err := os.WriteFile(filename, []byte(main+"\n198.51.100.2:2252\n-\n-\n-\n-\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check(2, 0, main, []byte("W2")) // reject non-Tailscale endpoint
+	if err := os.WriteFile(filename, []byte("broken\n100.76.5.2:2252\n-\n-\n-\n-\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check(2, 0, main, []byte("W2")) // reject unexpected primary identity
+}
 
 func TestChannelPrefix(t *testing.T) {
 	for i := 0; i < 7; i++ {

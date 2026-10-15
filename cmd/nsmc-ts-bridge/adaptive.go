@@ -40,10 +40,12 @@ type WANReport struct {
 	UpdatedAt string     `json:"updated_at"`
 	Mode      string     `json:"mode"`
 	Lanes     []WANStats `json:"lanes"`
+	Admission *admissionSnapshot `json:"admission,omitempty"`
 }
 
 type wanTelemetry struct {
 	lanes      [6]wanCounter
+	admission *bridgeAdmission
 	mu         sync.RWMutex
 	weights    [6]int
 	ewma       [6]float64
@@ -245,7 +247,12 @@ func (t *wanTelemetry) sample(now time.Time, peers []string) WANReport {
 		results = append(results, WANStats{WAN: i + 1, Peer: peer, Active: active, RXBytes: rx, TXBytes: lane.txBytes.Load(), RXMbps: instant, EWMAMbps: t.ewma[i], Weight: weight, Successes: success, Failures: fail, AvgSetupMS: average})
 	}
 	t.lastSample = now
-	return WANReport{UpdatedAt: now.UTC().Format(time.RFC3339Nano), Mode: "adaptive-ewma-weighted", Lanes: results}
+	report := WANReport{UpdatedAt: now.UTC().Format(time.RFC3339Nano), Mode: "adaptive-ewma-weighted", Lanes: results}
+	if t.admission != nil {
+		snapshot := t.admission.snapshot()
+		report.Admission = &snapshot
+	}
+	return report
 }
 
 func saveReport(path string, report WANReport) error {

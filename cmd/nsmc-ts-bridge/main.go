@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -122,18 +123,21 @@ func runServer(listen, allowed, gostHost string, gostBase int) error {
 	}
 	defer ln.Close()
 	log.Printf("NanoPi Go bridge %s => GOST %s:%d..%d", listen, gostHost, gostBase, gostBase+6)
-	sem := make(chan struct{}, 96)
+	gate := newBridgeAdmission(maxServerSessions, 0, maxServerWaiters, admissionWait)
 	for {
 		c, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-		select {
-		case sem <- struct{}{}:
-			go func() { defer func() { <-sem }(); serveServerConn(c, allowed, gostHost, gostBase) }()
-		default:
-			_ = c.Close()
-		}
+		go func() {
+			release, ok := gate.acquire(false)
+			if !ok {
+				_ = c.Close()
+				return
+			}
+			defer release()
+			serveServerConn(c, allowed, gostHost, gostBase)
+		}()
 	}
 }
 
@@ -218,17 +222,25 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile 
 		}
 		return
 	}
-	cmd.Stderr = io.Discard
+	var ncStderr bytes.Buffer
+	cmd.Stderr = &ncStderr
 	started := time.Now()
 	if err := cmd.Start(); err != nil {
+		log.Printf("tailscale nc WAN %d failed to start: %v", wan, err)
 		if telemetry != nil {
 			telemetry.failed(wan)
 		}
 		return
 	}
+	gotReply := false
 	defer func() {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		err := cmd.Wait()
+		if !gotReply && err != nil {
+			// The child only connects to known Tailscale peers; never print
+			// user-supplied SOCKS requests, credentials or remote content.
+			log.Printf("tailscale nc WAN %d failed before SOCKS reply: %v stderr=%q", wan, err, truncateDiagnostic(ncStderr.String()))
+		}
 	}()
 	if len(prefix) != 0 {
 		if _, err := stdin.Write(prefix); err != nil {
@@ -247,6 +259,7 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile 
 	}()
 	reply := &wanByteWriter{Writer: client, telemetry: telemetry, wan: wan, inbound: true, started: started}
 	bytes, _ := io.Copy(reply, stdout)
+	gotReply = bytes > 0
 	if telemetry != nil {
 		if bytes > 0 {
 			telemetry.succeeded(wan, reply.firstDelay)
@@ -261,6 +274,14 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile 
 	}
 }
 
+func truncateDiagnostic(s string) string {
+	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
+	if len(s) > 256 {
+		s = s[:256]
+	}
+	return s
+}
+
 func runClient(ip string, base int, remote, tailscale, peersFile, statsFile string, adaptive bool) error {
 	if _, _, err := net.SplitHostPort(remote); err != nil {
 		return err
@@ -271,10 +292,11 @@ func runClient(ip string, base int, remote, tailscale, peersFile, statsFile stri
 			_ = l.Close()
 		}
 	}()
-	sem := make(chan struct{}, 48)
+	gate := newBridgeAdmission(maxClientSessions, maxOrdinarySessions, maxClientWaiters, admissionWait)
 	var telemetry *wanTelemetry
 	if statsFile != "" {
 		telemetry = newWANTelemetry()
+		telemetry.admission = gate
 		go telemetry.publish(statsFile, peersFile, remote)
 	}
 	for i := 0; i < channels; i++ {
@@ -289,15 +311,18 @@ func runClient(ip string, base int, remote, tailscale, peersFile, statsFile stri
 				if err != nil {
 					return
 				}
-				select {
-				case sem <- struct{}{}:
-					go func() {
-						defer func() { <-sem }()
-						serveClientConn(c, index, remote, tailscale, peersFile, telemetry, adaptive)
-					}()
-				default:
-					_ = c.Close()
-				}
+				go func() {
+					// The NSMC portal is pinned to vwan2 / port 12882.
+					// Reserve 16 of 128 slots for this listener; its
+					// regular transfers still obey the shared WAN gate.
+					release, ok := gate.acquire(index == 2)
+					if !ok {
+						_ = c.Close()
+						return
+					}
+					defer release()
+					serveClientConn(c, index, remote, tailscale, peersFile, telemetry, adaptive)
+				}()
 			}
 		}(i, ln)
 	}

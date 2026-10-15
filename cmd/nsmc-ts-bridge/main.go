@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"

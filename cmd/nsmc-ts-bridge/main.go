@@ -27,11 +27,6 @@ import (
 
 const channels = 7
 
-// Give a half-closed stream time to receive its final response, but never
-// retain its upstream TCP socket indefinitely after the local SOCKS client
-// has already gone away. This was exhausting the bridge connection pool.
-const bridgeDrainGrace = 15 * time.Second
-
 var balancedPeerIndex atomic.Uint64
 
 func main() {
@@ -100,16 +95,10 @@ func channelIndex(prefix []byte) (int, error) {
 }
 
 func copyBoth(client, upstream net.Conn) {
-	copyBothWithGrace(client, upstream, bridgeDrainGrace)
-}
-
-func copyBothWithGrace(client, upstream net.Conn, grace time.Duration) {
 	var wg sync.WaitGroup
-	finished := make(chan struct{}, 2)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		defer func() { finished <- struct{}{} }()
 		_, _ = io.Copy(upstream, client)
 		if v, ok := upstream.(interface{ CloseWrite() error }); ok {
 			_ = v.CloseWrite()
@@ -117,22 +106,11 @@ func copyBothWithGrace(client, upstream net.Conn, grace time.Duration) {
 	}()
 	go func() {
 		defer wg.Done()
-		defer func() { finished <- struct{}{} }()
 		_, _ = io.Copy(client, upstream)
 		if v, ok := client.(interface{ CloseWrite() error }); ok {
 			_ = v.CloseWrite()
 		}
 	}()
-	<-finished
-	select {
-	case <-finished:
-	case <-time.After(grace):
-		// net.Conn.Close is safe from a different goroutine and unblocks
-		// both io.Copy directions even if the peer never closes its stream.
-		_ = client.Close()
-		_ = upstream.Close()
-		<-finished
-	}
 	wg.Wait()
 }
 
@@ -362,10 +340,6 @@ func serveClientConn(client net.Conn, channel int, remote, tailscale, peersFile 
 type tailnetDialer func(context.Context, string, uint16) (net.Conn, error)
 
 func serveLocalAPIConn(client net.Conn, dial tailnetDialer, host, port string, prefix []byte, telemetry *wanTelemetry, wan int) {
-	serveLocalAPIConnWithGrace(client, dial, host, port, prefix, telemetry, wan, bridgeDrainGrace)
-}
-
-func serveLocalAPIConnWithGrace(client net.Conn, dial tailnetDialer, host, port string, prefix []byte, telemetry *wanTelemetry, wan int, grace time.Duration) {
 	portNum, err := strconv.ParseUint(port, 10, 16)
 	if err != nil || portNum == 0 {
 		if telemetry != nil {
@@ -394,25 +368,15 @@ func serveLocalAPIConnWithGrace(client net.Conn, dial tailnetDialer, host, port 
 		}
 	}
 	done := make(chan struct{})
-	responseDone := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(&wanByteWriter{Writer: upstream, telemetry: telemetry, wan: wan, inbound: false}, client)
 		if half, ok := upstream.(interface{ CloseWrite() error }); ok {
 			_ = half.CloseWrite()
 		}
-		// A SOCKS client may disconnect without the remote GOST/Tailnet
-		// stream ever delivering EOF. Without a bounded drain the proxy
-		// goroutine, WAN active slot and remote TCP session all leak.
-		select {
-		case <-responseDone:
-		case <-time.After(grace):
-			_ = upstream.Close()
-		}
 		close(done)
 	}()
 	reply := &wanByteWriter{Writer: client, telemetry: telemetry, wan: wan, inbound: true, started: started}
 	n, _ := io.Copy(reply, upstream)
-	close(responseDone)
 	if telemetry != nil {
 		if n > 0 {
 			telemetry.succeeded(wan, reply.firstDelay)
